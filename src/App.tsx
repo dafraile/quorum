@@ -68,14 +68,14 @@ const visitImages: Record<VisitId, { alt: string; caption: string; src: string }
   },
 };
 
-const archetypeArtPositions: Record<ArchetypeId, { x: string; y: string }> = {
-  intern: { x: "0%", y: "0%" },
-  oldNurse: { x: "33.3%", y: "0%" },
-  biblioRat: { x: "66.6%", y: "0%" },
-  contrarian: { x: "100%", y: "0%" },
-  patientAdvocate: { x: "13%", y: "100%" },
-  shrink: { x: "50%", y: "100%" },
-  oldGeezer: { x: "87%", y: "100%" },
+const archetypeArtImages: Record<ArchetypeId, string> = {
+  intern: "/generated/archetype-intern.png",
+  oldNurse: "/generated/archetype-nurse.png",
+  biblioRat: "/generated/archetype-biblio-rat.png",
+  contrarian: "/generated/archetype-contrarian.png",
+  patientAdvocate: "/generated/archetype-advocate.png",
+  shrink: "/generated/archetype-shrink.png",
+  oldGeezer: "/generated/archetype-old-geezer.png",
 };
 
 const initialPersisted: PersistedState = {
@@ -825,14 +825,9 @@ function FloorView({
                 <button
                   className="card-face card-front"
                   onClick={() => onToggleArchetype(agent.id)}
-                  style={
-                    {
-                      "--art-x": archetypeArtPositions[agent.id].x,
-                      "--art-y": archetypeArtPositions[agent.id].y,
-                    } as CSSProperties
-                  }
                   type="button"
                 >
+                  <img alt="" className="card-art" draggable={false} src={archetypeArtImages[agent.id]} />
                   <span className="card-selected-mark">{selectedArchetypes.includes(agent.id) ? <Check size={15} /> : null}</span>
                   <span className="card-nameplate">
                     <span className="card-title">{agent.shortName}</span>

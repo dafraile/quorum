@@ -721,10 +721,20 @@ button:disabled {
 
 .card-front {
   position: relative;
-  background-image: url("/generated/archetype-card-sheet.png");
-  background-position: var(--art-x) var(--art-y);
-  background-size: 430% auto;
-  background-repeat: no-repeat;
+  background: #efe6d3;
+}
+
+.card-art {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+  object-position: center;
+  pointer-events: none;
+  user-select: none;
 }
 
 .card-front::before,
@@ -858,8 +868,8 @@ button:disabled {
 }
 
 .archetype-token:hover .card-tune,
-.archetype-token:focus-within .card-tune,
-.archetype-token.tuning .card-tune {
+.archetype-token.tuning .card-tune,
+.card-tune:focus-visible {
   opacity: 1;
   transform: translateY(0);
 }
