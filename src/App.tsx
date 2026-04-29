@@ -147,7 +147,7 @@ function App() {
   const [travelRevealed, setTravelRevealed] = useState(false);
   const [runtime, setRuntime] = useState<RuntimeInfo>({ live: false, model: "gpt-5.5" });
   const [useLiveApi, setUseLiveApi] = useState(true);
-  const [tuningCard, setTuningCard] = useState<ArchetypeId | null>("biblioRat");
+  const [tuningCard, setTuningCard] = useState<ArchetypeId | null>(null);
   const [followUps, setFollowUps] = useState<Partial<Record<ArchetypeId, string>>>({});
   const timers = useRef<number[]>([]);
 
@@ -331,7 +331,7 @@ function App() {
     timers.current.push(
       window.setTimeout(() => {
         setQuorumFlash(false);
-      }, 1400),
+      }, 2800),
     );
 
     if (liveRuntimeActive) {
@@ -673,17 +673,13 @@ function CaseRevealModal({ currentVisit, onClose, onOpenFloor }: CaseRevealModal
           <div className="case-beats">
             <Metric label="Signal" value={currentVisit === "visit1" ? "1,200/ul" : "6,000/ul"} tone="red" />
             <Metric label="Patient state" value="Asymptomatic" tone="teal" />
-            <Metric label="Quorum task" value="Force the skipped questions" tone="brass" />
+            <Metric label="Session task" value={currentVisit === "visit1" ? "Investigate or observe?" : "Parallel next steps?"} tone="brass" />
           </div>
 
           <div className="modal-actions">
             <button className="primary-button" onClick={onOpenFloor} type="button">
               <Layers3 size={17} />
               Compose the Session
-            </button>
-            <button className="secondary-button placeholder-action" type="button" title="Planned asset pass">
-              <WandSparkles size={17} />
-              Regenerate image
             </button>
           </div>
         </div>
@@ -751,7 +747,7 @@ function FloorView({
     <section className="floor-layout">
       {quorumFlash && (
         <div className="quorum-flash" role="status">
-          <span>We have quorum.</span>
+          <span>We have Quorum.</span>
         </div>
       )}
 
@@ -773,8 +769,15 @@ function FloorView({
 
         <DocketFacts currentVisit={currentVisit} travelRevealed={travelRevealed} onRevealTravel={onRevealTravel} />
 
+        <div className="condition-list">
+          <span className="mini-label">Medical conditions</span>
+          {matter.conditions.map((item) => (
+            <span key={item}>{item}</span>
+          ))}
+        </div>
+
         <div className="medication-list">
-          <span className="mini-label">Medication list</span>
+          <span className="mini-label">Medication</span>
           {matter.medication.map((item) => (
             <span key={item}>{item}</span>
           ))}
@@ -819,50 +822,60 @@ function FloorView({
                 style={{ "--agent-accent": agent.accent } as CSSProperties}
                 title={`${agent.name}: ${agent.stance}`}
               >
-                <button className="card-face" onClick={() => onToggleArchetype(agent.id)} type="button">
-                  <span
-                    aria-hidden="true"
-                    className="card-illustration"
-                    style={
-                      {
-                        "--art-x": archetypeArtPositions[agent.id].x,
-                        "--art-y": archetypeArtPositions[agent.id].y,
-                      } as CSSProperties
-                    }
-                  >
-                    <span className="card-orb">{iconForArchetype(agent.id)}</span>
+                <button
+                  className="card-face card-front"
+                  onClick={() => onToggleArchetype(agent.id)}
+                  style={
+                    {
+                      "--art-x": archetypeArtPositions[agent.id].x,
+                      "--art-y": archetypeArtPositions[agent.id].y,
+                    } as CSSProperties
+                  }
+                  type="button"
+                >
+                  <span className="card-selected-mark">{selectedArchetypes.includes(agent.id) ? <Check size={15} /> : null}</span>
+                  <span className="card-nameplate">
+                    <span className="card-title">{agent.shortName}</span>
+                    <small>{agent.stance}</small>
                   </span>
-                  <span className="card-title">{agent.shortName}</span>
-                  <small>{agent.stance}</small>
                 </button>
-                <button className="card-tune" onClick={() => onTuneCard(tuningCard === agent.id ? null : agent.id)} type="button">
+                <button
+                  aria-label={`Configure ${agent.name}`}
+                  className="card-tune"
+                  onClick={() => onTuneCard(tuningCard === agent.id ? null : agent.id)}
+                  type="button"
+                >
                   <Settings2 size={13} />
-                  Tune
+                  Configure
                 </button>
                 {tuningCard === agent.id && (
-                  <CardSettings agent={agent} settings={settings[agent.id]} onUpdate={onUpdateSettings} />
+                  <div className="card-reverse">
+                    <CardSettings agent={agent} settings={settings[agent.id]} onUpdate={onUpdateSettings} />
+                  </div>
                 )}
               </article>
             ))}
           </div>
         </section>
 
-        <section className="floor-grid" aria-label="The Floor">
-          {selectedRoster.map((agent) => (
-            <AgentCard
-              agent={agent}
-              key={agent.id}
-              output={outputs[agent.id] ?? ""}
-              sources={sources[agent.id] ?? []}
-              review={reviews[agent.id] ?? "pending"}
-              callState={callState}
-              onReview={onReview}
-              followUpValue={followUps[agent.id] ?? ""}
-              onChangeFollowUp={onChangeFollowUp}
-              onAskFollowUp={onAskFollowUp}
-            />
-          ))}
-        </section>
+        {callState !== "idle" && (
+          <section className="floor-grid" aria-label="The Floor">
+            {selectedRoster.map((agent) => (
+              <AgentCard
+                agent={agent}
+                key={agent.id}
+                output={outputs[agent.id] ?? ""}
+                sources={sources[agent.id] ?? []}
+                review={reviews[agent.id] ?? "pending"}
+                callState={callState}
+                onReview={onReview}
+                followUpValue={followUps[agent.id] ?? ""}
+                onChangeFollowUp={onChangeFollowUp}
+                onAskFollowUp={onAskFollowUp}
+              />
+            ))}
+          </section>
+        )}
 
         <section className="clerk-zone">
           <div className="panel-heading">

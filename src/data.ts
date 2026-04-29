@@ -38,6 +38,7 @@ export type Matter = {
   summary: string;
   flag: string;
   urgency: "red" | "amber" | "quiet";
+  conditions: string[];
   background: string[];
   medication: string[];
 };
@@ -219,6 +220,7 @@ export const matters: Matter[] = [
     summary: "Asymptomatic eosinophilia discovered on routine cardiovascular bloods.",
     flag: "Deferred history question and medication review open",
     urgency: "red",
+    conditions: ["Ischaemic heart disease", "Asthma", "Hypertension", "Hypercholesterolaemia", "GORD"],
     background: [
       "Ischaemic heart disease; NSTEMI 2019, two stents",
       "Asthma, well controlled",
@@ -244,6 +246,7 @@ export const matters: Matter[] = [
     summary: "New HbA1c result after medication change.",
     flag: "Routine result returned",
     urgency: "quiet",
+    conditions: ["Type 2 diabetes", "Sleep apnoea", "Dyslipidaemia"],
     background: ["T2DM", "Sleep apnoea", "Shift worker"],
     medication: ["Metformin", "Semaglutide", "Atorvastatin"],
   },
@@ -255,6 +258,7 @@ export const matters: Matter[] = [
     summary: "Migraine review with increasing triptan use.",
     flag: "Follow-up due next week",
     urgency: "amber",
+    conditions: ["Migraine with aura", "Postpartum", "Night-shift sleep disruption"],
     background: ["Migraine with aura", "Postpartum 9 months", "Works nights"],
     medication: ["Sumatriptan PRN", "Magnesium", "Combined inhaler"],
   },
@@ -266,6 +270,7 @@ export const matters: Matter[] = [
     summary: "Medication reconciliation after hospital discharge.",
     flag: "Discharge summary imported",
     urgency: "amber",
+    conditions: ["Atrial fibrillation", "CKD stage 3", "Falls risk"],
     background: ["Atrial fibrillation", "CKD stage 3", "Falls risk"],
     medication: ["Apixaban", "Furosemide", "Ramipril"],
   },
