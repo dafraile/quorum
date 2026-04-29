@@ -815,12 +815,12 @@ function FloorView({
           <div className="archetype-strip card-deck">
             {archetypes.map((agent) => (
               <article
+                aria-label={`${agent.name}: ${agent.stance}`}
                 className={`archetype-token archetype-card ${selectedArchetypes.includes(agent.id) ? "active" : ""} ${
                   tuningCard === agent.id ? "tuning" : ""
                 } ${agent.id === "oldGeezer" ? "negative-card" : ""}`}
                 key={agent.id}
                 style={{ "--agent-accent": agent.accent } as CSSProperties}
-                title={`${agent.name}: ${agent.stance}`}
               >
                 <button
                   className="card-face card-front"
@@ -941,6 +941,10 @@ function CardSettings({
 }) {
   return (
     <div className="card-back">
+      <div className="card-back-header">
+        <strong>{agent.shortName}</strong>
+        <span>Configure</span>
+      </div>
       <label>
         Provider
         <select value={settings.provider} disabled>

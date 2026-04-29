@@ -674,13 +674,17 @@ button:disabled {
 
 .archetype-strip {
   display: grid;
-  grid-template-columns: repeat(4, minmax(150px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(168px, 206px));
   gap: 12px;
+  align-items: start;
+  justify-content: start;
 }
 
 .archetype-token {
   position: relative;
-  min-height: 258px;
+  width: 100%;
+  max-width: 206px;
+  min-height: 0;
   aspect-ratio: 0.68;
   border: 0;
   border-radius: 9px;
@@ -840,6 +844,15 @@ button:disabled {
     transform 140ms ease;
 }
 
+.card-tune:focus {
+  outline: 0;
+}
+
+.card-tune:focus-visible {
+  outline: 2px solid rgba(255, 250, 240, 0.92);
+  outline-offset: 2px;
+}
+
 .card-tune svg {
   color: #fffaf0;
 }
@@ -857,7 +870,7 @@ button:disabled {
   z-index: 3;
   display: grid;
   align-items: start;
-  padding: 48px 12px 12px;
+  padding: 46px 11px 11px;
   border-radius: 9px;
   background-image: url("/generated/archetype-card-back.png");
   background-position: center;
@@ -869,8 +882,8 @@ button:disabled {
 
 .card-back {
   display: grid;
-  gap: 7px;
-  padding: 10px;
+  gap: 6px;
+  padding: 9px;
   border: 1px solid rgba(255, 250, 240, 0.56);
   border-radius: 7px;
   background: rgba(255, 250, 240, 0.84);
@@ -879,24 +892,46 @@ button:disabled {
   backdrop-filter: blur(5px);
 }
 
-.card-back label {
-  display: grid;
-  gap: 4px;
+.card-back-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding-bottom: 3px;
+  border-bottom: 1px solid rgba(106, 98, 87, 0.2);
+  color: #312c25;
+}
+
+.card-back-header strong {
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.card-back-header span {
   color: #6a6257;
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 900;
   text-transform: uppercase;
-  letter-spacing: 0.06em;
+}
+
+.card-back label {
+  display: grid;
+  gap: 3px;
+  color: #6a6257;
+  font-size: 9px;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
 .card-back select {
-  min-height: 28px;
+  min-height: 26px;
   width: 100%;
   border: 1px solid var(--border);
   border-radius: 5px;
   background: #fffaf0;
   color: #312c25;
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 700;
 }
 
@@ -905,7 +940,7 @@ button:disabled {
   align-items: center;
   text-transform: none !important;
   letter-spacing: 0 !important;
-  font-size: 11px !important;
+  font-size: 10px !important;
 }
 
 .deck-toolbar {
@@ -1295,7 +1330,7 @@ button:disabled {
   }
 
   .archetype-strip {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(160px, 196px));
   }
 }
 
@@ -1356,7 +1391,7 @@ button:disabled {
   }
 
   .archetype-strip {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(150px, 188px));
   }
 
   .motion-panel .primary-button {
@@ -1408,7 +1443,8 @@ button:disabled {
   }
 
   .archetype-strip {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(auto-fit, minmax(142px, 164px));
+    justify-content: center;
   }
 
   .case-beats {
