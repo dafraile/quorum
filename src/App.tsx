@@ -293,6 +293,7 @@ function App() {
           agentName: agent.name,
           stance: agent.stance,
           tone: agent.tone,
+          rules: agent.rules,
           motion: motions[currentVisit],
           visit: currentVisit,
           caseContext: caseContext(),

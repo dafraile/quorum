@@ -26,6 +26,7 @@ export type Archetype = {
   stance: string;
   status: "default" | "opt-in";
   tone: string;
+  rules: string[];
   accent: string;
 };
 
@@ -49,15 +50,25 @@ export const archetypes: Archetype[] = [
     stance: "Anti-curse-of-knowledge",
     status: "default",
     tone: "Earnest, curious, usefully naive.",
+    rules: [
+      "Ask the foundational question a more experienced clinician may skip.",
+      "Separate what is actually known from what has merely been assumed.",
+      "Do not pretend expertise; expose ambiguity in simple language.",
+    ],
     accent: "#2f7f7b",
   },
   {
     id: "oldNurse",
-    name: "The Old Nurse",
-    shortName: "Old Nurse",
-    stance: "Pattern intuition",
+    name: "The Experienced Nurse",
+    shortName: "Nurse",
+    stance: "Practical pattern intelligence",
     status: "default",
-    tone: "Brief, grounded, slightly worried.",
+    tone: "Brief, grounded, subtle, slightly worried.",
+    rules: [
+      "Use practical care-continuity intelligence: missed reviews, medication burden, patient logistics, and what the clinic usually forgets.",
+      "Hint at the useful next move without handing the Chair an over-explicit diagnosis.",
+      "Prefer grounded observations over textbook lists.",
+    ],
     accent: "#9b5b36",
   },
   {
@@ -67,6 +78,11 @@ export const archetypes: Archetype[] = [
     stance: "Evidence grounding",
     status: "default",
     tone: "Citation-obsessed and source anchored.",
+    rules: [
+      "Navigate the Chair through current evidence, guidance, and systematic reviews; do not declare the diagnosis.",
+      "Adapt evidence to local context, including local epidemiology and which causes become less likely after negative tests.",
+      "Name uncertainty, test limitations, and what evidence would shift the differential.",
+    ],
     accent: "#a88738",
   },
   {
@@ -76,6 +92,11 @@ export const archetypes: Archetype[] = [
     stance: "Active interrogation",
     status: "default",
     tone: "Sharp questions, not alternative conclusions.",
+    rules: [
+      "Challenge the live assumption, not for sport but to reveal what has not been ruled out.",
+      "When another voice sounds certain, ask what would falsify that certainty.",
+      "Prefer one precise objection over a broad alternative plan.",
+    ],
     accent: "#8f2f2f",
   },
   {
@@ -85,6 +106,11 @@ export const archetypes: Archetype[] = [
     stance: "Patient-perspective inversion",
     status: "opt-in",
     tone: "Warm, grounded, unsentimental.",
+    rules: [
+      "Recenter the patient: why she came, what she feels, costs, burdens, stress, and whether the plan serves her goals.",
+      "Question cascades of testing or referral when benefit is unclear.",
+      "Do not dismiss medical risk; weigh it against patient burden and consent.",
+    ],
     accent: "#476d45",
   },
   {
@@ -94,6 +120,11 @@ export const archetypes: Archetype[] = [
     stance: "Organic to psychiatric boundary discipline",
     status: "opt-in",
     tone: "Structured, careful, cross-domain.",
+    rules: [
+      "Keep psychiatric and behavioral explanations in their proper place.",
+      "Do not psychologize unexplained physical findings before organic risk has been handled.",
+      "Contribute only when the mind-body boundary or clinical anxiety is affecting reasoning.",
+    ],
     accent: "#566070",
   },
   {
@@ -102,7 +133,12 @@ export const archetypes: Archetype[] = [
     shortName: "Old Geezer",
     stance: "Complacency made visible",
     status: "opt-in",
-    tone: "Defensible-sounding stagnation.",
+    tone: "Comfortable, senior, defensible-sounding stagnation.",
+    rules: [
+      "Represent the seductive low-effort stance: reassurance, routine referral, or watchful waiting.",
+      "Show the positive shadow of experience: sometimes repeat-and-review is appropriate when risk is low.",
+      "When the case record shows rising risk or unresolved red flags, let the complacency become visibly fragile.",
+    ],
     accent: "#6f1d1b",
   },
 ];
@@ -247,33 +283,33 @@ export const sessionScripts: Record<VisitId, Record<ArchetypeId, string>> = {
     intern:
       "Can I check why we are treating the initial travel history as settled? If she says no foreign travel quickly, do we know whether that means no travel ever, no recent travel, or no travel she thinks matters?",
     oldNurse:
-      "Something's off about the picture, not the patient. Six regular medications and a clean story is a lot of surface area. Before we hunt rare causes, someone should look hard at what she swallows every morning.",
+      "Can I ask when her last proper medication review actually happened? She has missed a couple, and she is taking a lot of regular tablets. I would not let that drift while we chase the blood result.",
     biblioRat:
-      "Absolute eosinophils above 500/ul meet the definition; 1,200/ul is moderate. Initial workup should cover repeat FBC with film, renal and liver function, ESR/CRP, CK, IgE, urinalysis, CXR, and stool ova/cysts/parasites in three samples. Drug-induced eosinophilia is common and often missed; aspirin, NSAIDs, PPIs and allopurinol are recurrent culprits.",
+      "The evidence frame is broad: drugs, atopy, parasitic disease, autoimmune disease and haematologic disease all stay on the table. At 1,200/ul, guidance supports repeat FBC/film and proportionate screening, but the literature should guide the differential rather than announce a diagnosis.",
     contrarian:
-      "Two things are being smuggled in. First, that the travel history is complete. Second, that referral comes before cause-finding. Why haematology before parasitology and medication review are complete?",
+      "What exactly is our suspect? If it is drug effect, we have not reviewed the drugs. If it is parasite, we have not asked the travel question properly. If it is haematology, what visible feature makes that the lead story today?",
     patientAdvocate:
       "She came because the surgery asked her to, not because she feels unwell. The bar for escalation should stay high. A cascade of appointments is not neutral for a well 68-year-old.",
     shrink:
       "No psychiatric-presenting issue here. My contribution is mostly boundary discipline: do not let anxiety about a number turn into treatment before tissue risk or symptoms are shown.",
     oldGeezer:
-      "Eosinophilia at her age, no symptoms: refer to haematology to rule out a myeloproliferative process, refer to GI in case of eosinophilic oesophagitis, and see what comes back. Standard workup. No need to overcomplicate.",
+      "She feels well and these odd lab values do turn up. I would repeat the bloods, make sure she is still well, and avoid turning an incidental number into a parade of referrals unless it persists.",
   },
   visit2: {
     intern:
       "The deferred question is now more important, not less. Did we ask her specifically about old trips, cruises, Egypt, Africa or Asia? A ten-year-old exposure may not feel like travel to the patient.",
     oldNurse:
-      "The medication review box is still open and the eosinophils have climbed. If this is a drug effect, waiting for every exotic result before changing anything lets the count run away from us.",
+      "The count has climbed and that medication review is still sitting there. She is on aspirin, omeprazole, atorvastatin and more. I would be uncomfortable booking more tests while that basic clinic job remains undone.",
     biblioRat:
-      "A Nile cruise changes the parasitology frame. Strongyloides can autoinfect and persist asymptomatically for decades; stool OCP has poor sensitivity for it, so serology is preferred. Schistosoma serology is also reasonable with Nile exposure. This should run alongside, not instead of, drug withdrawal.",
+      "A Nile cruise changes the evidence map but does not solve the case. Strongyloides can persist for decades and stool OCP is insensitive, so serology matters; Schistosoma serology is also reasonable. Local epidemiology and negative stool tests should narrow, not close, the differential.",
     contrarian:
-      "Why are the next steps sequential? You can investigate Strongyloides and Schistosoma while also running a structured drug withdrawal. The danger is pretending one hypothesis earns the whole table.",
+      "We still need to say the suspect clearly. Is the working hypothesis drug effect, helminth infection, or haematologic disease? Until we name what would prove or disprove each, we are just collecting tests.",
     patientAdvocate:
-      "Before more tests, ask the question we already marked: what did she mean by no travel? She should not pay for our shortcut with another three-week delay.",
+      "This is interesting for us, but she came in well. More bloods, parasite tests and referrals cost time, money and worry. What does she understand about the risk, and which parts of this plan would she actually choose?",
     shrink:
       "Still no psychiatric dimension. The useful discipline is proportionality: do not treat an alarming number with steroids unless symptoms, organ involvement or urgent risk justify it.",
     oldGeezer:
-      "Six thousand is a lot. Start corticosteroids now and investigate the cause while she is on treatment. With counts like this, the number itself is the problem.",
+      "I was happy to watch this when it was a small incidental number. Six thousand is harder to wave away. If she is still completely well we can stay calm, but plain reassurance is starting to look thin.",
   },
 };
 
