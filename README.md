@@ -46,7 +46,7 @@ OPENAI_API_KEY=... npm run dev -- --port 5173
 Optional:
 
 ```bash
-OPENAI_MODEL=gpt-5
+OPENAI_MODEL=gpt-5.5
 ```
 
 The browser calls local endpoints (`/api/runtime` and `/api/agent`). The API key stays server-side in the Vite dev process. If a live agent call times out or fails, that card falls back to the seeded voice so the demo still completes.

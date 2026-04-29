@@ -130,13 +130,13 @@ export const defaultAgentSettings: Record<ArchetypeId, AgentSettings> = {
   biblioRat: {
     provider: "openai",
     model: "server-default",
-    reasoning: "high",
+    reasoning: "medium",
     evidenceMode: true,
   },
   contrarian: {
     provider: "openai",
     model: "server-default",
-    reasoning: "high",
+    reasoning: "medium",
   },
   patientAdvocate: {
     provider: "openai",
@@ -151,7 +151,7 @@ export const defaultAgentSettings: Record<ArchetypeId, AgentSettings> = {
   oldGeezer: {
     provider: "openai",
     model: "server-default",
-    reasoning: "low",
+    reasoning: "medium",
   },
 };
 

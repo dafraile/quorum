@@ -53,7 +53,30 @@ type PersistedState = {
   minutes: string[];
 };
 
-const storageKey = "quorum-demo-state-v032";
+const storageKey = "quorum-demo-state-v033";
+
+const visitImages: Record<VisitId, { alt: string; caption: string; src: string }> = {
+  visit1: {
+    src: "/generated/visit-1-consult.png",
+    alt: "Marseille tarot style scene of Mrs M discussing routine blood results with her clinician.",
+    caption: "Visit 1: incidental eosinophilia on routine cardiovascular bloods.",
+  },
+  visit2: {
+    src: "/generated/visit-2-followup.png",
+    alt: "Marseille tarot style scene of Mrs M at follow-up with travel history, blood results, and chest X-ray.",
+    caption: "Visit 2: count rising, clean CXR, stool OCP negative, travel history live.",
+  },
+};
+
+const archetypeArtPositions: Record<ArchetypeId, { x: string; y: string }> = {
+  intern: { x: "0%", y: "0%" },
+  oldNurse: { x: "33.3%", y: "0%" },
+  biblioRat: { x: "66.6%", y: "0%" },
+  contrarian: { x: "100%", y: "0%" },
+  patientAdvocate: { x: "13%", y: "100%" },
+  shrink: { x: "50%", y: "100%" },
+  oldGeezer: { x: "87%", y: "100%" },
+};
 
 const initialPersisted: PersistedState = {
   visit: "visit1",
@@ -122,7 +145,7 @@ function App() {
   const [reviews, setReviews] = useState<Partial<Record<ArchetypeId, ReviewStatus>>>({});
   const [plannerVisible, setPlannerVisible] = useState(false);
   const [travelRevealed, setTravelRevealed] = useState(false);
-  const [runtime, setRuntime] = useState<RuntimeInfo>({ live: false, model: "gpt-5" });
+  const [runtime, setRuntime] = useState<RuntimeInfo>({ live: false, model: "gpt-5.5" });
   const [useLiveApi, setUseLiveApi] = useState(true);
   const [tuningCard, setTuningCard] = useState<ArchetypeId | null>("biblioRat");
   const [followUps, setFollowUps] = useState<Partial<Record<ArchetypeId, string>>>({});
@@ -146,7 +169,7 @@ function App() {
     fetch("/api/runtime")
       .then((response) => response.json())
       .then((payload: RuntimeInfo) => setRuntime(payload))
-      .catch(() => setRuntime({ live: false, model: "gpt-5" }));
+      .catch(() => setRuntime({ live: false, model: "gpt-5.5" }));
   }, []);
 
   useEffect(() => {
@@ -258,7 +281,7 @@ function App() {
     const agent = archetypes.find((item) => item.id === id)!;
     const settings = persisted.settings[id];
     const controller = new AbortController();
-    const timeout = window.setTimeout(() => controller.abort(), id === "biblioRat" ? 16000 : 10000);
+    const timeout = window.setTimeout(() => controller.abort(), id === "biblioRat" ? 45000 : 30000);
 
     try {
       const response = await fetch("/api/agent", {
@@ -623,6 +646,8 @@ type CaseRevealModalProps = {
 };
 
 function CaseRevealModal({ currentVisit, onClose, onOpenFloor }: CaseRevealModalProps) {
+  const image = visitImages[currentVisit];
+
   return (
     <div className="modal-scrim" role="dialog" aria-modal="true" aria-label="Mrs M case reveal">
       <section className="case-reveal">
@@ -630,12 +655,10 @@ function CaseRevealModal({ currentVisit, onClose, onOpenFloor }: CaseRevealModal
           <X size={18} />
         </button>
 
-        <div className="visit-portrait" aria-hidden="true">
-          <div className="window-frame" />
-          <div className="clinician-figure" />
-          <div className="patient-figure" />
-          <div className="paper-result">EO 1,200</div>
-        </div>
+        <figure className="visit-portrait">
+          <img alt={image.alt} src={image.src} />
+          <figcaption>{image.caption}</figcaption>
+        </figure>
 
         <div className="case-copy">
           <span className="section-label">Flagged matter</span>
@@ -659,7 +682,7 @@ function CaseRevealModal({ currentVisit, onClose, onOpenFloor }: CaseRevealModal
             </button>
             <button className="secondary-button placeholder-action" type="button" title="Planned asset pass">
               <WandSparkles size={17} />
-              Generate visit image
+              Regenerate image
             </button>
           </div>
         </div>
@@ -796,8 +819,19 @@ function FloorView({
                 title={`${agent.name}: ${agent.stance}`}
               >
                 <button className="card-face" onClick={() => onToggleArchetype(agent.id)} type="button">
-                  <span className="card-orb">{iconForArchetype(agent.id)}</span>
-                  <span>{agent.shortName}</span>
+                  <span
+                    aria-hidden="true"
+                    className="card-illustration"
+                    style={
+                      {
+                        "--art-x": archetypeArtPositions[agent.id].x,
+                        "--art-y": archetypeArtPositions[agent.id].y,
+                      } as CSSProperties
+                    }
+                  >
+                    <span className="card-orb">{iconForArchetype(agent.id)}</span>
+                  </span>
+                  <span className="card-title">{agent.shortName}</span>
                   <small>{agent.stance}</small>
                 </button>
                 <button className="card-tune" onClick={() => onTuneCard(tuningCard === agent.id ? null : agent.id)} type="button">
@@ -903,8 +937,9 @@ function CardSettings({
         Model
         <select value={settings.model} onChange={(event) => onUpdate(agent.id, { model: event.target.value })}>
           <option value="server-default">Server default</option>
-          <option value="gpt-5">gpt-5</option>
+          <option value="gpt-5.5">gpt-5.5</option>
           <option value="gpt-5.5-pro">gpt-5.5-pro</option>
+          <option value="gpt-5">gpt-5</option>
           <option value="gpt-4.1">gpt-4.1</option>
         </select>
       </label>

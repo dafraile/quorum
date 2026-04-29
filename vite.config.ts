@@ -115,7 +115,7 @@ export default defineConfig({
         server.middlewares.use("/api/runtime", (_req, res) => {
           sendJson(res, 200, {
             live: Boolean(process.env.OPENAI_API_KEY),
-            model: process.env.OPENAI_MODEL || "gpt-5",
+            model: process.env.OPENAI_MODEL || "gpt-5.5",
           });
         });
 
@@ -136,7 +136,7 @@ export default defineConfig({
             const model =
               body.model && body.model !== "server-default"
                 ? body.model
-                : process.env.OPENAI_MODEL || "gpt-5";
+                : process.env.OPENAI_MODEL || "gpt-5.5";
 
             const tools =
               body.agentId === "biblioRat" && body.evidenceMode
