@@ -8,7 +8,7 @@
 
 **Mrs M, 68. Female.**
 
-*Background:* Ischaemic heart disease (NSTEMI 2019, two stents). Asthma — well controlled. Hypertension. Hypercholesterolaemia. GORD. No history of foreign travel in the last decade *(per initial history)*.
+*Background:* Ischaemic heart disease (NSTEMI 2019, two stents). Asthma — well controlled. Hypertension. High Cholesterol. GORD. No history of foreign travel in the last decade *(per initial history)*.
 
 *Current medication:*
 - Aspirin 100 mg OD
