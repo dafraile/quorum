@@ -4,8 +4,8 @@ import {
   BookOpenText,
   Check,
   ChevronLeft,
+  ChevronRight,
   ClipboardList,
-  Clock3,
   ExternalLink,
   FileText,
   Gavel,
@@ -29,15 +29,10 @@ import {
   type Archetype,
   type ArchetypeId,
   type ReviewStatus,
-  type VisitId,
   archetypes,
   defaultAgentSettings,
   defaultSession,
   fallbackSources,
-  matters,
-  motions,
-  plannerDrafts,
-  sessionScripts,
 } from "./data";
 
 type View = "docket" | "floor";
@@ -82,7 +77,6 @@ type QuorumSession = {
   title: string;
   mode: SessionMode;
   sourceText: string;
-  template?: "mrs-m";
   selectedArchetypes: ArchetypeId[];
   settings: Record<ArchetypeId, AgentSettings>;
   results: Partial<Record<ArchetypeId, AgentResult>>;
@@ -97,17 +91,30 @@ type QuorumSession = {
 };
 
 type PersistedState = {
-  visit: VisitId;
   selectedArchetypes: ArchetypeId[];
   settings: Record<ArchetypeId, AgentSettings>;
-  committed: Record<VisitId, boolean>;
-  minutes: string[];
   sessions: QuorumSession[];
   activeSessionId?: string;
   customArchetypes: Archetype[];
 };
 
-const storageKey = "quorum-demo-state-v033";
+const storageKey = "quorum-state-v1";
+const legacyStorageKey = "quorum-demo-state-v033";
+
+const defaultPlannerDrafts: Record<SessionMode, string[]> = {
+  clinical: [
+    "Name the clinical question and the decision that needs to be made now.",
+    "Separate known facts from assumptions, deferred questions, and patient-context gaps.",
+    "List the proportionate next clinical actions and who owns each one.",
+    "Record what would change the plan or require escalation.",
+  ],
+  thinking: [
+    "Name the core decision, unresolved tension, or question.",
+    "Separate assumptions, options, risks, and evidence gaps.",
+    "Choose the next concrete move and the smallest useful test.",
+    "Record what would change the recommendation.",
+  ],
+};
 
 const archetypeArtImages: Record<ArchetypeId, string> = {
   intern: "/generated/archetype-intern.png",
@@ -133,47 +140,43 @@ const thinkingStarterText =
   "Paste a strategic problem, research question, product decision, conflict, draft, or messy thought here. Quorum will turn it into a chaired Session instead of one undifferentiated answer.";
 
 const initialPersisted: PersistedState = {
-  visit: "visit1",
   selectedArchetypes: defaultSession,
   settings: defaultAgentSettings,
-  committed: {
-    visit1: false,
-    visit2: false,
-  },
-  minutes: [],
   sessions: [],
   customArchetypes: [],
 };
 
 const loadPersisted = (): PersistedState => {
-  const raw = window.localStorage.getItem(storageKey);
+  const raw = window.localStorage.getItem(storageKey) ?? window.localStorage.getItem(legacyStorageKey);
   if (!raw) return initialPersisted;
 
   try {
     const parsed = JSON.parse(raw) as Partial<PersistedState>;
+    const sessions = (parsed.sessions ?? []).map((session) => ({
+      ...session,
+      settings: {
+        ...defaultAgentSettings,
+        ...(session.settings ?? {}),
+      },
+      selectedArchetypes: session.selectedArchetypes ?? defaultSession,
+      results: session.results ?? {},
+      outputs: session.outputs ?? {},
+      reviews: session.reviews ?? {},
+      lounge: session.lounge ?? [],
+      minutes: session.minutes ?? [],
+      actionLog: session.actionLog ?? [],
+    }));
+
     return {
-      ...initialPersisted,
-      ...parsed,
+      selectedArchetypes: parsed.selectedArchetypes ?? initialPersisted.selectedArchetypes,
       settings: {
         ...defaultAgentSettings,
         ...(parsed.settings ?? {}),
       },
-      sessions: (parsed.sessions ?? []).map((session) => ({
-        ...session,
-        settings: {
-          ...defaultAgentSettings,
-          ...(session.settings ?? {}),
-        },
-        selectedArchetypes: session.selectedArchetypes ?? defaultSession,
-        results: session.results ?? {},
-        outputs: session.outputs ?? {},
-        reviews: session.reviews ?? {},
-        lounge: session.lounge ?? [],
-        minutes: session.minutes ?? [],
-        actionLog: session.actionLog ?? [],
-      })),
+      sessions,
+      activeSessionId: sessions.some((session) => session.id === parsed.activeSessionId) ? parsed.activeSessionId : undefined,
       customArchetypes: parsed.customArchetypes ?? [],
-    } as PersistedState;
+    };
   } catch {
     return initialPersisted;
   }
@@ -307,13 +310,14 @@ function App() {
   const [persisted, setPersisted] = useState<PersistedState>(() => loadPersisted());
   const [callState, setCallState] = useState<CallState>("idle");
   const [quorumFlash, setQuorumFlash] = useState(false);
+  const [turnReviewOpen, setTurnReviewOpen] = useState(false);
+  const [turnReviewIndex, setTurnReviewIndex] = useState(0);
   const [outputs, setOutputs] = useState<Partial<Record<ArchetypeId, string>>>({});
   const [agentResults, setAgentResults] = useState<Partial<Record<ArchetypeId, AgentResult>>>({});
   const [sources, setSources] = useState<Partial<Record<ArchetypeId, SourceLink[]>>>({});
   const [reviews, setReviews] = useState<Partial<Record<ArchetypeId, ReviewStatus>>>({});
   const [plannerVisible, setPlannerVisible] = useState(false);
   const [clerkDraft, setClerkDraft] = useState<string[]>([]);
-  const [travelRevealed, setTravelRevealed] = useState(false);
   const [runtime, setRuntime] = useState<RuntimeInfo>({ live: false, model: "gpt-5.5" });
   const [useLiveApi, setUseLiveApi] = useState(true);
   const [tuningCard, setTuningCard] = useState<ArchetypeId | null>(null);
@@ -329,21 +333,16 @@ function App() {
 
   const allArchetypes = useMemo(() => [...archetypes, ...persisted.customArchetypes], [persisted.customArchetypes]);
   const activeSession = persisted.sessions.find((session) => session.id === persisted.activeSessionId);
-  const isCustomSession = Boolean(activeSession && activeSession.template !== "mrs-m");
   const activeSettings = activeSession?.settings ?? persisted.settings;
-  const activeMatter = matters[0];
   const selectedArchetypes = activeSession?.selectedArchetypes ?? persisted.selectedArchetypes;
-  const currentVisit = persisted.visit;
-  const clinicalInputBlocked = Boolean(
-    activeSession?.mode === "clinical" && activeSession.template !== "mrs-m" && !activeSession.anonymization?.approvedForLive,
-  );
+  const clinicalInputBlocked = Boolean(activeSession?.mode === "clinical" && !activeSession.anonymization?.approvedForLive);
   const runtimeBlocked = view === "floor" && clinicalInputBlocked;
   const liveRuntimeActive = runtime.live && useLiveApi && !runtimeBlocked;
   const currentMotion = activeSession
     ? activeSession.mode === "clinical"
       ? "Review the submitted clinical context. Surface assumptions, missing questions, safety concerns, evidence needs, and proportionate next actions."
       : "Deliberate on the submitted problem. Surface assumptions, tensions, options, risks, and next moves."
-    : motions[currentVisit];
+    : "Create a Session to begin deliberation.";
 
   const selectedRoster = useMemo(
     () => allArchetypes.filter((agent) => selectedArchetypes.includes(agent.id)),
@@ -378,13 +377,15 @@ function App() {
     setPlannerVisible(false);
     setClerkDraft([]);
     setQuorumFlash(false);
-    setTravelRevealed(false);
+    setTurnReviewOpen(false);
+    setTurnReviewIndex(0);
     setLoungePrompt("");
     setLoungeRunning(false);
   };
 
   const resetDemo = () => {
     window.localStorage.removeItem(storageKey);
+    window.localStorage.removeItem(legacyStorageKey);
     timers.current.forEach(window.clearTimeout);
     timers.current = [];
     setPersisted(initialPersisted);
@@ -395,7 +396,8 @@ function App() {
     setReviews({});
     setPlannerVisible(false);
     setClerkDraft([]);
-    setTravelRevealed(false);
+    setTurnReviewOpen(false);
+    setTurnReviewIndex(0);
     setLoungePrompt("");
     setLoungeRunning(false);
     setView("docket");
@@ -422,7 +424,8 @@ function App() {
     setPlannerVisible(false);
     setClerkDraft([]);
     setQuorumFlash(false);
-    setTravelRevealed(false);
+    setTurnReviewOpen(false);
+    setTurnReviewIndex(0);
     setCallState(Object.keys(session.results ?? {}).length ? "complete" : "idle");
     setLoungeSpeaker(session.selectedArchetypes[0] ?? "intern");
     setLoungeTarget("floor");
@@ -452,14 +455,13 @@ function App() {
     }));
   };
 
-  const createSession = (mode: SessionMode, title: string, sourceText: string, template?: "mrs-m") => {
+  const createSession = (mode: SessionMode, title: string, sourceText: string) => {
     const now = new Date().toISOString();
     const session: QuorumSession = {
       id: createId("session"),
       title: title.trim() || (mode === "clinical" ? "Untitled clinical review" : "Untitled thinking session"),
       mode,
       sourceText: sourceText.trim(),
-      template,
       selectedArchetypes: defaultSession,
       settings: defaultAgentSettings,
       results: {},
@@ -653,33 +655,18 @@ function App() {
   };
 
   const caseContext = () => {
-    if (activeSession && activeSession.template !== "mrs-m") {
-      const submittedText = sessionWorkingText(activeSession);
+    if (!activeSession) return "No active Session.";
 
-      return [
-        `Session title: ${activeSession.title}`,
-        `Mode: ${activeSession.mode}`,
-        activeSession.mode === "clinical" && activeSession.anonymization
-          ? "Submitted context after local anonymization:"
-          : "Submitted context:",
-        submittedText,
-        `Committed Minutes: ${activeSession.minutes.join("\n\n") || "None yet."}`,
-      ].join("\n");
-    }
-
-    const resultLine =
-      currentVisit === "visit1"
-        ? "Eosinophils 1,200/ul. Asymptomatic. Initial history says no recent foreign travel."
-        : `Eosinophils 6,000/ul. Stool OCP negative x3. CXR clean. Medication review still open. ${
-            travelRevealed ? "Travel clarified: Egypt Nile cruise about ten years ago." : "Deferred travel question still open."
-          }`;
+    const submittedText = sessionWorkingText(activeSession);
 
     return [
-      `${activeMatter.name}, ${activeMatter.age}, ${activeMatter.sex}. ${activeMatter.summary}`,
-      `Background: ${activeMatter.background.join("; ")}.`,
-      `Medication: ${activeMatter.medication.join("; ")}.`,
-      resultLine,
-      `Committed Minutes: ${(activeSession?.minutes ?? persisted.minutes).join("\n\n") || "None yet."}`,
+      `Session title: ${activeSession.title}`,
+      `Mode: ${activeSession.mode}`,
+      activeSession.mode === "clinical" && activeSession.anonymization
+        ? "Submitted context after local anonymization:"
+        : "Submitted context:",
+      submittedText,
+      `Committed records: ${activeSession.minutes.join("\n\n") || "None yet."}`,
     ].join("\n");
   };
 
@@ -708,9 +695,6 @@ function App() {
       setSources((previous) => ({ ...previous, biblioRat: fallbackSources }));
     }
 
-    const scripted = sessionScripts[currentVisit][id];
-    if (scripted && !isCustomSession) return scripted;
-
     const agent = allArchetypes.find((item) => item.id === id);
     const stance = agent?.stance ?? "a custom stance";
     const source = activeSession ? ` On this submission, I would focus on: ${sessionWorkingText(activeSession).slice(0, 180)}` : "";
@@ -731,6 +715,12 @@ function App() {
         [id]: outputText,
       },
     }));
+  };
+
+  const openTurnReview = () => {
+    setTurnReviewIndex(0);
+    setTurnReviewOpen(true);
+    appendAction("Turn ready for review", `${selectedArchetypes.length} archetype contributions are ready for card-by-card review.`);
   };
 
   const runAgentApi = async (id: ArchetypeId, chairQuestion?: string) => {
@@ -755,7 +745,6 @@ function App() {
           tone: agent.tone,
           rules: agent.rules,
           motion: currentMotion,
-          visit: currentVisit,
           caseContext: caseContext(),
           previousOutput: outputs[id],
           chairQuestion,
@@ -815,7 +804,11 @@ function App() {
           persistAgentResult(id, result);
           typeOutput(id, result.answer || fallbackFor(id), index * 220);
         }),
-      ).then(() => setCallState("complete"));
+      ).then(() => {
+        setQuorumFlash(false);
+        setCallState("complete");
+        openTurnReview();
+      });
 
       return;
     }
@@ -835,7 +828,9 @@ function App() {
 
     timers.current.push(
       window.setTimeout(() => {
+        setQuorumFlash(false);
         setCallState("complete");
+        openTurnReview();
       }, longest + 450),
     );
   };
@@ -1022,60 +1017,33 @@ function App() {
 
     const accepted = selectedRoster.filter((agent) => reviews[agent.id] === "accepted");
     const summaryActions = accepted.flatMap((agent) => agentResults[agent.id]?.suggestedActions ?? []).filter(Boolean);
-    setClerkDraft(summaryActions.length ? summaryActions.slice(0, 6) : plannerDrafts[currentVisit]);
+    setClerkDraft(summaryActions.length ? summaryActions.slice(0, 6) : defaultPlannerDrafts[activeSession?.mode ?? "thinking"]);
   };
 
   const commitMinutes = () => {
-    const visitLabel = currentVisit === "visit1" ? "Visit 1" : "Visit 2";
-    const draft = clerkDraft.length ? clerkDraft : plannerDrafts[currentVisit];
+    if (!activeSession) return;
+
+    const draft = clerkDraft.length ? clerkDraft : defaultPlannerDrafts[activeSession.mode];
     const minutes = draft.map((item) => `- ${item}`).join("\n");
 
-    if (activeSession) {
-      updateActiveSession((session) => ({
-        ...session,
-        minutes: [
-          `${session.title} Minutes committed\n${minutes}`,
-          ...session.minutes.filter((entry) => !entry.startsWith(`${session.title} Minutes`)),
-        ],
-        actionLog: [
-          {
-            id: createId("act"),
-            at: new Date().toISOString(),
-            label: "Minutes committed",
-            detail: `${draft.length} Clerk items were committed to the session record.`,
-          },
-          ...session.actionLog,
-        ].slice(0, 30),
-      }));
-      setPersisted((previous) => ({ ...previous, activeSessionId: undefined }));
-      setView("docket");
-      return;
-    }
-
-    setPersisted((previous) => ({
-      ...previous,
-      committed: {
-        ...previous.committed,
-        [currentVisit]: true,
-      },
+    updateActiveSession((session) => ({
+      ...session,
       minutes: [
-        `${visitLabel} Minutes committed\n${minutes}`,
-        ...previous.minutes.filter((entry) => !entry.startsWith(`${visitLabel} Minutes`)),
+        `${session.title} Minutes committed\n${minutes}`,
+        ...session.minutes.filter((entry) => !entry.startsWith(`${session.title} Minutes`)),
       ],
+      actionLog: [
+        {
+          id: createId("act"),
+          at: new Date().toISOString(),
+          label: "Minutes committed",
+          detail: `${draft.length} Clerk items were committed to the session record.`,
+        },
+        ...session.actionLog,
+      ].slice(0, 30),
     }));
-    appendAction("Minutes committed", `${draft.length} Clerk items were committed to the record.`);
-
+    setPersisted((previous) => ({ ...previous, activeSessionId: undefined }));
     setView("docket");
-  };
-
-  const advanceToVisit2 = () => {
-    resetTransient();
-    setPersisted((previous) => ({
-      ...previous,
-      visit: "visit2",
-    }));
-    setTravelRevealed(false);
-    setView("floor");
   };
 
   return (
@@ -1125,7 +1093,7 @@ function App() {
         </div>
       </header>
 
-      {view === "docket" ? (
+      {view === "docket" || !activeSession ? (
         <DocketView
           sessions={persisted.sessions}
           intakeMode={intakeMode}
@@ -1144,12 +1112,9 @@ function App() {
         />
       ) : (
         <FloorView
-          matter={activeMatter}
           session={activeSession}
-          isCustomSession={isCustomSession}
           motion={currentMotion}
           allArchetypes={allArchetypes}
-          currentVisit={currentVisit}
           selectedRoster={selectedRoster}
           selectedArchetypes={selectedArchetypes}
           settings={activeSettings}
@@ -1158,10 +1123,11 @@ function App() {
           agentResults={agentResults}
           sources={sources}
           reviews={reviews}
+          turnReviewOpen={turnReviewOpen}
+          turnReviewIndex={turnReviewIndex}
           callState={callState}
           quorumFlash={quorumFlash}
           plannerVisible={plannerVisible}
-          travelRevealed={travelRevealed}
           onToggleArchetype={toggleArchetype}
           onTuneCard={setTuningCard}
           onUpdateSettings={updateAgentSettings}
@@ -1183,10 +1149,10 @@ function App() {
           followUps={followUps}
           onChangeFollowUp={(id, value) => setFollowUps((previous) => ({ ...previous, [id]: value }))}
           onAskFollowUp={askAgentFollowUp}
+          onSetTurnReviewIndex={setTurnReviewIndex}
+          onCloseTurnReview={() => setTurnReviewOpen(false)}
           onShowPlanner={draftPlanner}
           onCommit={commitMinutes}
-          onRevealTravel={() => setTravelRevealed(true)}
-          onAdvanceToVisit2={advanceToVisit2}
           clerkDraft={clerkDraft}
         />
       )}
@@ -1381,12 +1347,9 @@ function DocketView({
 }
 
 type FloorProps = {
-  matter: (typeof matters)[number];
-  session?: QuorumSession;
-  isCustomSession: boolean;
+  session: QuorumSession;
   motion: string;
   allArchetypes: Archetype[];
-  currentVisit: VisitId;
   selectedRoster: Archetype[];
   selectedArchetypes: ArchetypeId[];
   settings: Record<ArchetypeId, AgentSettings>;
@@ -1395,10 +1358,11 @@ type FloorProps = {
   agentResults: Partial<Record<ArchetypeId, AgentResult>>;
   sources: Partial<Record<ArchetypeId, SourceLink[]>>;
   reviews: Partial<Record<ArchetypeId, ReviewStatus>>;
+  turnReviewOpen: boolean;
+  turnReviewIndex: number;
   callState: CallState;
   quorumFlash: boolean;
   plannerVisible: boolean;
-  travelRevealed: boolean;
   onToggleArchetype: (id: ArchetypeId) => void;
   onTuneCard: (id: ArchetypeId | null) => void;
   onUpdateSettings: (id: ArchetypeId, patch: Partial<AgentSettings>) => void;
@@ -1420,20 +1384,17 @@ type FloorProps = {
   followUps: Partial<Record<ArchetypeId, string>>;
   onChangeFollowUp: (id: ArchetypeId, value: string) => void;
   onAskFollowUp: (id: ArchetypeId) => void;
+  onSetTurnReviewIndex: (index: number) => void;
+  onCloseTurnReview: () => void;
   onShowPlanner: () => void;
   onCommit: () => void;
-  onRevealTravel: () => void;
-  onAdvanceToVisit2: () => void;
   clerkDraft: string[];
 };
 
 function FloorView({
-  matter,
   session,
-  isCustomSession,
   motion,
   allArchetypes,
-  currentVisit,
   selectedRoster,
   selectedArchetypes,
   settings,
@@ -1442,10 +1403,11 @@ function FloorView({
   agentResults,
   sources,
   reviews,
+  turnReviewOpen,
+  turnReviewIndex,
   callState,
   quorumFlash,
   plannerVisible,
-  travelRevealed,
   onToggleArchetype,
   onTuneCard,
   onUpdateSettings,
@@ -1467,75 +1429,73 @@ function FloorView({
   followUps,
   onChangeFollowUp,
   onAskFollowUp,
+  onSetTurnReviewIndex,
+  onCloseTurnReview,
   onShowPlanner,
   onCommit,
-  onRevealTravel,
-  onAdvanceToVisit2,
   clerkDraft,
 }: FloorProps) {
   return (
     <section className="floor-layout">
-      {quorumFlash && (
-        <div className="quorum-flash" role="status">
-          <span>We have Quorum.</span>
+      {(quorumFlash || callState === "calling") && (
+        <div className={`quorum-flash ${quorumFlash ? "intro" : "waiting"}`} role="status" aria-live="polite">
+          <span>
+            <strong>{quorumFlash ? "We have Quorum." : "Asking the archetypes"}</strong>
+            {quorumFlash ? (
+              <small>The Session is being called.</small>
+            ) : (
+              <>
+                <i aria-hidden="true" className="quorum-spinner" />
+                <small>Waiting for every selected card to answer.</small>
+              </>
+            )}
+          </span>
         </div>
+      )}
+
+      {turnReviewOpen && callState === "complete" && (
+        <TurnReviewOverlay
+          agentResults={agentResults}
+          followUps={followUps}
+          index={turnReviewIndex}
+          onAskFollowUp={onAskFollowUp}
+          onChangeFollowUp={onChangeFollowUp}
+          onClose={onCloseTurnReview}
+          onIndexChange={onSetTurnReviewIndex}
+          onReroll={onReroll}
+          onReview={onReview}
+          outputs={outputs}
+          reviews={reviews}
+          roster={selectedRoster}
+          sources={sources}
+        />
       )}
 
       <aside className="docket-card">
         <div className="panel-heading">
-          <span className="section-label">{isCustomSession ? "Session" : "Matter"}</span>
-          <strong>{session?.title ?? matter.name}</strong>
+          <span className="section-label">Session</span>
+          <strong>{session.title}</strong>
         </div>
 
-        {isCustomSession && session ? (
-          <div className="session-context-card">
-            <span className={`mode-badge ${session.mode}`}>{session.mode === "clinical" ? "Clinical" : "Thinking"}</span>
-            <p>{session.sourceText}</p>
-            {session.mode === "clinical" && (
-              <AnonymizationPanel
-                anonymization={session.anonymization}
-                onApprove={() => onSetClinicalLiveApproval(true)}
-                onPause={() => onSetClinicalLiveApproval(false)}
-                onRun={onRunAnonymizer}
-              />
-            )}
-          </div>
-        ) : (
-          <>
-            <div className="patient-heading">
-              <span className="patient-avatar">M</span>
-              <div>
-                <h2>
-                  {matter.age}, {matter.sex}
-                </h2>
-                <p>{matter.summary}</p>
-              </div>
-            </div>
-
-            <DocketFacts currentVisit={currentVisit} travelRevealed={travelRevealed} onRevealTravel={onRevealTravel} />
-
-            <div className="condition-list">
-              <span className="mini-label">Medical conditions</span>
-              {matter.conditions.map((item) => (
-                <span key={item}>{item}</span>
-              ))}
-            </div>
-
-            <div className="medication-list">
-              <span className="mini-label">Medication</span>
-              {matter.medication.map((item) => (
-                <span key={item}>{item}</span>
-              ))}
-            </div>
-          </>
-        )}
+        <div className="session-context-card">
+          <span className={`mode-badge ${session.mode}`}>{session.mode === "clinical" ? "Clinical" : "Thinking"}</span>
+          <p>{session.sourceText}</p>
+          {session.mode === "clinical" && (
+            <AnonymizationPanel
+              anonymization={session.anonymization}
+              onApprove={() => onSetClinicalLiveApproval(true)}
+              onPause={() => onSetClinicalLiveApproval(false)}
+              onRun={onRunAnonymizer}
+            />
+          )}
+        </div>
       </aside>
 
       <section className="floor-main">
         <div className="motion-panel">
           <div>
             <span className="section-label">The Motion</span>
-            <h1>{isCustomSession ? "Call the Session" : currentVisit === "visit1" ? "Call the Session" : "Reopen the Session"}</h1>
+            <h1>Call the Session</h1>
             <p>{motion}</p>
           </div>
           <button className="primary-button" disabled={callState === "calling"} onClick={onCallSession} type="button">
@@ -1716,7 +1676,7 @@ function FloorView({
             <div className="planner-draft">
               <span className="mini-label">Planner draft</span>
               <ul>
-                {(clerkDraft.length ? clerkDraft : plannerDrafts[currentVisit]).map((item) => (
+                {(clerkDraft.length ? clerkDraft : defaultPlannerDrafts[session.mode]).map((item) => (
                   <li key={item}>{item}</li>
                 ))}
               </ul>
@@ -1725,12 +1685,6 @@ function FloorView({
                   <FileText size={17} />
                   Commit Minutes
                 </button>
-                {!isCustomSession && currentVisit === "visit1" && (
-                  <button className="secondary-button" onClick={onAdvanceToVisit2} type="button">
-                    <Clock3 size={17} />
-                    Three weeks later
-                  </button>
-                )}
               </div>
             </div>
           )}
@@ -1750,7 +1704,6 @@ function FloorView({
           </section>
         ) : null}
       </section>
-
     </section>
   );
 }
@@ -1769,6 +1722,178 @@ type AgentCardProps = {
   onAskFollowUp: (id: ArchetypeId) => void;
   compact?: boolean;
 };
+
+type TurnReviewOverlayProps = {
+  roster: Archetype[];
+  index: number;
+  outputs: Partial<Record<ArchetypeId, string>>;
+  agentResults: Partial<Record<ArchetypeId, AgentResult>>;
+  sources: Partial<Record<ArchetypeId, SourceLink[]>>;
+  reviews: Partial<Record<ArchetypeId, ReviewStatus>>;
+  followUps: Partial<Record<ArchetypeId, string>>;
+  onIndexChange: (index: number) => void;
+  onClose: () => void;
+  onReview: (id: ArchetypeId, status: ReviewStatus) => void;
+  onReroll: (id: ArchetypeId) => void;
+  onChangeFollowUp: (id: ArchetypeId, value: string) => void;
+  onAskFollowUp: (id: ArchetypeId) => void;
+};
+
+function TurnReviewOverlay({
+  roster,
+  index,
+  outputs,
+  agentResults,
+  sources,
+  reviews,
+  followUps,
+  onIndexChange,
+  onClose,
+  onReview,
+  onReroll,
+  onChangeFollowUp,
+  onAskFollowUp,
+}: TurnReviewOverlayProps) {
+  const [expanded, setExpanded] = useState(false);
+  const safeIndex = Math.min(index, Math.max(roster.length - 1, 0));
+  const agent = roster[safeIndex];
+  const result = agent ? agentResults[agent.id] : undefined;
+  const output = agent ? outputs[agent.id] ?? result?.answer ?? "" : "";
+  const sourceList = agent ? sources[agent.id] ?? [] : [];
+  const review = agent ? reviews[agent.id] ?? "pending" : "pending";
+  const isFirst = safeIndex === 0;
+  const isLast = safeIndex >= roster.length - 1;
+  const points = result?.keyPoints?.length
+    ? result.keyPoints.slice(0, 4)
+    : output
+      ? [output.slice(0, 260)]
+      : ["No contribution captured for this card yet."];
+
+  useEffect(() => {
+    setExpanded(false);
+  }, [agent?.id]);
+
+  if (!agent) return null;
+
+  const advance = () => {
+    if (isLast) {
+      onClose();
+      return;
+    }
+
+    onIndexChange(safeIndex + 1);
+  };
+
+  const markAndAdvance = (status: ReviewStatus) => {
+    onReview(agent.id, status);
+    advance();
+  };
+
+  return (
+    <div className="turn-review-scrim" role="dialog" aria-modal="true" aria-label="Review archetype contribution">
+      <section className="turn-review-window" style={{ "--agent-accent": agent.accent } as CSSProperties}>
+        <header className="turn-review-header">
+          <div>
+            <span className="section-label">Turn review</span>
+            <strong>
+              Card {safeIndex + 1} of {roster.length}
+            </strong>
+          </div>
+          <button className="review-close" onClick={onClose} type="button" aria-label="Close turn review">
+            <X size={17} />
+          </button>
+        </header>
+
+        <div className="turn-review-body">
+          <aside className="turn-review-card" aria-label={agent.name}>
+            <img alt="" className="review-card-art" draggable={false} src={archetypeArtImages[agent.id] ?? customCardImage} />
+            <span className="review-card-nameplate">
+              <strong>{agent.shortName}</strong>
+              <small>{agent.stance}</small>
+            </span>
+          </aside>
+
+          <section className="turn-review-copy">
+            <div className="turn-review-title">
+              <span className={`review-status ${review}`}>{statusLabel[review]}</span>
+              <h2>{agent.name}</h2>
+              <p>{agent.tone}</p>
+            </div>
+
+            <div className="turn-review-summary">
+              <span className="mini-label">Main messages</span>
+              <ul>
+                {points.map((point) => (
+                  <li key={point}>{point}</li>
+                ))}
+              </ul>
+            </div>
+
+            {expanded && (
+              <div className="turn-review-expanded">
+                <span className="mini-label">Full contribution</span>
+                <p>{output || "No full contribution recorded."}</p>
+                {sourceList.length > 0 && (
+                  <div className="source-list">
+                    {sourceList.map((source) => (
+                      <a href={source.url} key={source.url} rel="noreferrer" target="_blank">
+                        <ExternalLink size={12} />
+                        {source.title}
+                      </a>
+                    ))}
+                  </div>
+                )}
+                <div className="agent-followup review-followup">
+                  <input
+                    aria-label={`Ask ${agent.shortName} a follow-up`}
+                    onChange={(event) => onChangeFollowUp(agent.id, event.target.value)}
+                    placeholder={`Ask ${agent.shortName} to refine...`}
+                    value={followUps[agent.id] ?? ""}
+                  />
+                  <button onClick={() => onAskFollowUp(agent.id)} type="button">
+                    <Send size={14} />
+                  </button>
+                </div>
+              </div>
+            )}
+          </section>
+        </div>
+
+        <footer className="turn-review-actions">
+          <button className="ghost-button" disabled={isFirst} onClick={() => onIndexChange(safeIndex - 1)} type="button">
+            <ChevronLeft size={16} />
+            Previous
+          </button>
+          <button className="secondary-button" onClick={() => setExpanded((value) => !value)} type="button">
+            <MessageSquareText size={16} />
+            {expanded ? "Collapse" : "Expand"}
+          </button>
+          <button className="secondary-button" onClick={() => onReroll(agent.id)} type="button">
+            <RotateCcw size={16} />
+            Reroll
+          </button>
+          <span className="turn-review-spacer" />
+          <button className="secondary-button" onClick={() => markAndAdvance("rejected")} type="button">
+            <X size={16} />
+            Reject
+          </button>
+          <button className="secondary-button" onClick={() => markAndAdvance("revision")} type="button">
+            <RefreshCcw size={16} />
+            Revise
+          </button>
+          <button className="primary-button" onClick={() => markAndAdvance("accepted")} type="button">
+            <Check size={16} />
+            {isLast ? "Accept and finish" : "Accept and next"}
+          </button>
+          <button className="ghost-button" onClick={advance} type="button">
+            {isLast ? "Finish" : "Next"}
+            {!isLast && <ChevronRight size={16} />}
+          </button>
+        </footer>
+      </section>
+    </div>
+  );
+}
 
 function AnonymizationPanel({
   anonymization,
@@ -2027,74 +2152,6 @@ function AgentCard({
       </footer>
     </article>
   );
-}
-
-type DocketFactsProps = {
-  currentVisit: VisitId;
-  travelRevealed: boolean;
-  onRevealTravel: () => void;
-};
-
-function DocketFacts({ currentVisit, travelRevealed, onRevealTravel }: DocketFactsProps) {
-  return (
-    <div className="fact-stack">
-      <Metric label="Eosinophils" value={currentVisit === "visit1" ? "1,200/ul" : "6,000/ul"} tone="red" />
-      <Metric label="CXR" value={currentVisit === "visit1" ? "Ordered" : "Clean"} tone="teal" />
-      <Metric label="Stool OCP" value={currentVisit === "visit1" ? "Ordered x3" : "Negative x3"} tone="brass" />
-      {currentVisit === "visit2" && (
-        <div className={`travel-box ${travelRevealed ? "revealed" : ""}`}>
-          <span className="mini-label">Deferred question</span>
-          {travelRevealed ? (
-            <strong>Egypt Nile cruise, about ten years ago.</strong>
-          ) : (
-            <>
-              <span>Re-take travel history with specific prompts.</span>
-              <button className="inline-action" onClick={onRevealTravel} type="button">
-                Ask now
-              </button>
-            </>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-type MetricProps = {
-  label: string;
-  value: string;
-  tone: "red" | "teal" | "brass";
-};
-
-function Metric({ label, value, tone }: MetricProps) {
-  return (
-    <div className={`metric ${tone}`}>
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </div>
-  );
-}
-
-type StepProps = {
-  active: boolean;
-  done: boolean;
-  label: string;
-};
-
-function Step({ active, done, label }: StepProps) {
-  return (
-    <div className={`step ${active ? "active" : ""} ${done ? "done" : ""}`}>
-      <span>{done ? <Check size={14} /> : <Clock3 size={14} />}</span>
-      <strong>{label}</strong>
-    </div>
-  );
-}
-
-function docketFlag(currentVisit: VisitId, committed: Record<VisitId, boolean>) {
-  if (currentVisit === "visit2" && committed.visit2) return "Minutes committed; follow-up plan signed";
-  if (currentVisit === "visit2") return "Reopened: eosinophils 6,000/ul and deferred questions still open";
-  if (committed.visit1) return "Visit 1 Minutes committed; review due in three weeks";
-  return "Pulsing flag: medication review and deferred travel question";
 }
 
 export default App;
