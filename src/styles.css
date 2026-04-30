@@ -546,6 +546,13 @@ button:disabled {
   font-weight: 800;
 }
 
+.session-list em {
+  color: #1f6763;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 850;
+}
+
 .minutes-entry {
   min-height: 140px;
   margin: 0 0 12px;
@@ -609,6 +616,12 @@ button:disabled {
   gap: 10px;
 }
 
+.session-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
 .session-context-card p {
   max-height: 420px;
   margin: 0;
@@ -645,6 +658,48 @@ button:disabled {
   border-color: rgba(47, 127, 123, 0.35);
   color: #1f6763;
   background: rgba(47, 127, 123, 0.1);
+}
+
+.mode-badge.linked {
+  border-color: rgba(168, 135, 56, 0.34);
+  color: #6f5620;
+  background: rgba(168, 135, 56, 0.1);
+}
+
+.follow-up-card {
+  display: grid;
+  gap: 9px;
+  padding: 11px;
+  border: 1px solid rgba(47, 127, 123, 0.24);
+  border-radius: 7px;
+  background: rgba(255, 250, 240, 0.76);
+}
+
+.follow-up-card strong {
+  display: block;
+  margin-top: 3px;
+  color: #312c25;
+  font-size: 13px;
+}
+
+.follow-up-card textarea {
+  min-height: 104px;
+  width: 100%;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: #fffaf0;
+  color: #312c25;
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.45;
+  resize: vertical;
+}
+
+.follow-up-card .secondary-button {
+  width: 100%;
+  min-height: 34px;
+  font-size: 12px;
 }
 
 .floor-main {

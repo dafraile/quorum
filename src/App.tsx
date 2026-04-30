@@ -95,6 +95,8 @@ type QuorumSession = {
   title: string;
   mode: SessionMode;
   sourceText: string;
+  parentSessionId?: string;
+  followUpNote?: string;
   selectedArchetypes: ArchetypeId[];
   settings: Record<ArchetypeId, AgentSettings>;
   results: Partial<Record<ArchetypeId, AgentResult>>;
@@ -456,6 +458,7 @@ function App() {
   const [intakeMode, setIntakeMode] = useState<SessionMode>("clinical");
   const [intakeTitle, setIntakeTitle] = useState("");
   const [intakeText, setIntakeText] = useState("");
+  const [followUpText, setFollowUpText] = useState("");
   const [loungeSpeaker, setLoungeSpeaker] = useState<ArchetypeId>("intern");
   const [loungeTarget, setLoungeTarget] = useState<ArchetypeId | "floor">("floor");
   const [loungePrompt, setLoungePrompt] = useState("");
@@ -470,9 +473,13 @@ function App() {
   const runtimeBlocked = view === "floor" && clinicalInputBlocked;
   const liveRuntimeActive = runtime.live && useLiveApi && !runtimeBlocked;
   const currentMotion = activeSession
-    ? activeSession.mode === "clinical"
-      ? "Review the submitted clinical context. Surface assumptions, missing questions, safety concerns, evidence needs, and proportionate next actions."
-      : "Deliberate on the submitted problem. Surface assumptions, tensions, options, risks, and next moves."
+    ? activeSession.parentSessionId
+      ? activeSession.mode === "clinical"
+        ? "Review this follow-up clinical update in light of the prior signed record. Surface what changed, what remains unresolved, new safety concerns, and proportionate next actions."
+        : "Deliberate on this follow-up update in light of the prior signed record. Surface what changed, what remains unresolved, and the next concrete move."
+      : activeSession.mode === "clinical"
+        ? "Review the submitted clinical context. Surface assumptions, missing questions, safety concerns, evidence needs, and proportionate next actions."
+        : "Deliberate on the submitted problem. Surface assumptions, tensions, options, risks, and next moves."
     : "Create a Session to begin deliberation.";
 
   const selectedRoster = useMemo(
@@ -512,6 +519,7 @@ function App() {
     setTurnReviewIndex(0);
     setLoungePrompt("");
     setLoungeRunning(false);
+    setFollowUpText("");
   };
 
   const resetDemo = () => {
@@ -531,6 +539,7 @@ function App() {
     setTurnReviewIndex(0);
     setLoungePrompt("");
     setLoungeRunning(false);
+    setFollowUpText("");
     setView("docket");
   };
 
@@ -562,6 +571,7 @@ function App() {
     setLoungeTarget("floor");
     setLoungePrompt("");
     setLoungeRunning(false);
+    setFollowUpText("");
   };
 
   const appendAction = (label: string, detail: string) => {
@@ -618,6 +628,74 @@ function App() {
       sessions: [session, ...previous.sessions].slice(0, 20),
     }));
     resetTransient();
+    setView("floor");
+  };
+
+  const createFollowUpSession = () => {
+    if (!activeSession) return;
+
+    const update = followUpText.trim();
+    if (!update) return;
+
+    const now = new Date().toISOString();
+    const followUpCount = persisted.sessions.filter((session) => session.parentSessionId === activeSession.id).length + 1;
+    const priorRecords = activeSession.minutes.length
+      ? activeSession.minutes.join("\n\n")
+      : "No signed Clerk records have been committed yet.";
+    const carriedActions = activeSession.actionLog.length
+      ? activeSession.actionLog
+          .slice(0, 10)
+          .map((entry) => `- ${entry.label}: ${entry.detail}`)
+          .join("\n")
+      : "No action-log entries yet.";
+
+    const session: QuorumSession = {
+      id: createId("session"),
+      title: `${activeSession.title} follow-up ${followUpCount}`,
+      mode: activeSession.mode,
+      parentSessionId: activeSession.id,
+      followUpNote: update,
+      sourceText: [
+        `Follow-up to: ${activeSession.title}`,
+        "",
+        "Previous Session context:",
+        activeSession.sourceText,
+        "",
+        "Signed records carried forward:",
+        priorRecords,
+        "",
+        "Action log carried forward:",
+        carriedActions,
+        "",
+        "Update since last Session:",
+        update,
+      ].join("\n"),
+      selectedArchetypes: [...activeSession.selectedArchetypes],
+      settings: { ...activeSession.settings },
+      results: {},
+      outputs: {},
+      reviews: {},
+      lounge: [],
+      minutes: [],
+      actionLog: [
+        {
+          id: createId("act"),
+          at: now,
+          label: "Follow-up Session created",
+          detail: `Inherited ${activeSession.selectedArchetypes.length} archetypes and prior record from ${activeSession.title}.`,
+        },
+      ],
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    setPersisted((previous) => ({
+      ...previous,
+      activeSessionId: session.id,
+      sessions: [session, ...previous.sessions].slice(0, 30),
+    }));
+    resetTransient();
+    setFollowUpText("");
     setView("floor");
   };
 
@@ -789,16 +867,22 @@ function App() {
     if (!activeSession) return "No active Session.";
 
     const submittedText = sessionWorkingText(activeSession);
+    const parentSession = activeSession.parentSessionId
+      ? persisted.sessions.find((session) => session.id === activeSession.parentSessionId)
+      : undefined;
 
     return [
       `Session title: ${activeSession.title}`,
       `Mode: ${activeSession.mode}`,
+      parentSession ? `Linked previous Session: ${parentSession.title}` : "",
       activeSession.mode === "clinical" && activeSession.anonymization
         ? "Submitted context after local anonymization:"
         : "Submitted context:",
       submittedText,
       `Committed records: ${activeSession.minutes.join("\n\n") || "None yet."}`,
-    ].join("\n");
+    ]
+      .filter(Boolean)
+      .join("\n");
   };
 
   const typeOutput = (id: ArchetypeId, text: string, startDelay = 0) => {
@@ -1309,6 +1393,9 @@ function App() {
           onShowPlanner={draftPlanner}
           onCommit={commitMinutes}
           clerkDraft={clerkDraft}
+          followUpText={followUpText}
+          onSetFollowUpText={setFollowUpText}
+          onCreateFollowUpSession={createFollowUpSession}
         />
       )}
 
@@ -1461,15 +1548,22 @@ function DocketView({
           <div className="session-list">
             <span className="mini-label">Recent Sessions</span>
             {sessions.length > 0 ? (
-              sessions.slice(0, 5).map((session) => (
-                <button key={session.id} onClick={() => onOpenSession(session.id)} type="button">
-                  <strong>{session.title}</strong>
-                  <span>
-                    {session.mode === "clinical" ? "Clinical" : "Thinking"} - {session.selectedArchetypes.length} cards -{" "}
-                    {session.minutes.length} records
-                  </span>
-                </button>
-              ))
+              sessions.slice(0, 5).map((session) => {
+                const parentSession = session.parentSessionId
+                  ? sessions.find((item) => item.id === session.parentSessionId)
+                  : undefined;
+
+                return (
+                  <button key={session.id} onClick={() => onOpenSession(session.id)} type="button">
+                    <strong>{session.title}</strong>
+                    <span>
+                      {session.mode === "clinical" ? "Clinical" : "Thinking"} - {session.selectedArchetypes.length} cards -{" "}
+                      {session.minutes.length} records
+                    </span>
+                    {parentSession && <em>Follow-up to {parentSession.title}</em>}
+                  </button>
+                );
+              })
             ) : (
               <div className="empty-minutes compact">
                 <Archive size={22} />
@@ -1544,6 +1638,9 @@ type FloorProps = {
   onShowPlanner: () => void;
   onCommit: () => void;
   clerkDraft: ClerkDraft | null;
+  followUpText: string;
+  onSetFollowUpText: (value: string) => void;
+  onCreateFollowUpSession: () => void;
 };
 
 function FloorView({
@@ -1589,7 +1686,11 @@ function FloorView({
   onShowPlanner,
   onCommit,
   clerkDraft,
+  followUpText,
+  onSetFollowUpText,
+  onCreateFollowUpSession,
 }: FloorProps) {
+  const parentLabel = session.parentSessionId ? "Follow-up Session" : "Primary Session";
   const visibleClerkDraft = clerkDraft ?? fallbackClerkDraft(session.mode, selectedRoster, agentResults, reviews);
 
   return (
@@ -1635,7 +1736,10 @@ function FloorView({
         </div>
 
         <div className="session-context-card">
-          <span className={`mode-badge ${session.mode}`}>{session.mode === "clinical" ? "Clinical" : "Thinking"}</span>
+          <div className="session-badges">
+            <span className={`mode-badge ${session.mode}`}>{session.mode === "clinical" ? "Clinical" : "Thinking"}</span>
+            <span className="mode-badge linked">{parentLabel}</span>
+          </div>
           <p>{session.sourceText}</p>
           {session.mode === "clinical" && (
             <AnonymizationPanel
@@ -1645,6 +1749,25 @@ function FloorView({
               onRun={onRunAnonymizer}
             />
           )}
+          <div className="follow-up-card">
+            <div>
+              <span className="mini-label">Follow-up Session</span>
+              <strong>Use the same Quorum again</strong>
+            </div>
+            <textarea
+              onChange={(event) => onSetFollowUpText(event.target.value)}
+              placeholder={
+                session.mode === "clinical"
+                  ? "Add interval history, new results, treatment response, adverse effects, patient concerns, or what changed since this review..."
+                  : "Add what happened since this Session, new constraints, decisions made, results, objections, or the next version of the problem..."
+              }
+              value={followUpText}
+            />
+            <button className="secondary-button" disabled={!followUpText.trim()} onClick={onCreateFollowUpSession} type="button">
+              <RefreshCcw size={16} />
+              Start follow-up
+            </button>
+          </div>
         </div>
       </aside>
 
