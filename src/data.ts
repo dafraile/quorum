@@ -1,19 +1,12 @@
 export type VisitId = "visit1" | "visit2";
 
-export type ArchetypeId =
-  | "intern"
-  | "oldNurse"
-  | "biblioRat"
-  | "contrarian"
-  | "patientAdvocate"
-  | "shrink"
-  | "oldGeezer";
+export type ArchetypeId = string;
 
 export type ReviewStatus = "pending" | "accepted" | "rejected" | "revision";
 export type ReasoningLevel = "low" | "medium" | "high";
 
 export type AgentSettings = {
-  provider: "openai";
+  provider: "openai" | "anthropic" | "local";
   model: string;
   reasoning: ReasoningLevel;
   evidenceMode?: boolean;
@@ -28,6 +21,7 @@ export type Archetype = {
   tone: string;
   rules: string[];
   accent: string;
+  custom?: boolean;
 };
 
 export type Matter = {
@@ -283,7 +277,7 @@ export const motions: Record<VisitId, string> = {
     "Reopen Mrs M after three weeks: eosinophils now 6,000/ul, stool OCP negative x3, CXR clean, medication review and travel question still open.",
 };
 
-export const sessionScripts: Record<VisitId, Record<ArchetypeId, string>> = {
+export const sessionScripts: Record<VisitId, Record<string, string>> = {
   visit1: {
     intern:
       "Can I check why we are treating the initial travel history as settled? If she says no foreign travel quickly, do we know whether that means no travel ever, no recent travel, or no travel she thinks matters?",
