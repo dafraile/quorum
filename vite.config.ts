@@ -8,7 +8,6 @@ type AgentRequest = {
   tone: string;
   rules?: string[];
   motion: string;
-  visit: string;
   caseContext: string;
   previousOutput?: string;
   chairQuestion?: string;
@@ -29,7 +28,10 @@ type ClerkRequest = {
       answer?: string;
       keyPoints?: string[];
       questions?: string[];
+      missingQuestions?: string[];
       suggestedActions?: string[];
+      uncertainty?: string[];
+      citations?: Array<{ title: string; url: string }>;
     };
     output?: string;
   }>;
@@ -52,12 +54,32 @@ const agentResultFormat = {
         type: "array",
         items: { type: "string" },
       },
+      missingQuestions: {
+        type: "array",
+        items: { type: "string" },
+      },
       suggestedActions: {
         type: "array",
         items: { type: "string" },
       },
+      uncertainty: {
+        type: "array",
+        items: { type: "string" },
+      },
+      citations: {
+        type: "array",
+        items: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            title: { type: "string" },
+            url: { type: "string" },
+          },
+          required: ["title", "url"],
+        },
+      },
     },
-    required: ["answer", "keyPoints", "questions", "suggestedActions"],
+    required: ["answer", "keyPoints", "questions", "missingQuestions", "suggestedActions", "uncertainty", "citations"],
   },
 };
 
@@ -76,10 +98,28 @@ const clerkResultFormat = {
       },
       actions: {
         type: "array",
+        items: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            label: { type: "string" },
+            detail: { type: "string" },
+            owner: { type: "string" },
+            priority: { type: "string" },
+          },
+          required: ["label", "detail", "owner", "priority"],
+        },
+      },
+      unresolvedQuestions: {
+        type: "array",
+        items: { type: "string" },
+      },
+      reviewSummary: {
+        type: "array",
         items: { type: "string" },
       },
     },
-    required: ["minutes", "takeaways", "actions"],
+    required: ["minutes", "takeaways", "actions", "unresolvedQuestions", "reviewSummary"],
   },
 };
 
@@ -227,7 +267,6 @@ ${roleRules}
 Keep answer under 120 words unless evidence citations are essential.
 Make one or two concrete points visible on the case record.
 
-Current visit: ${body.visit}
 Motion: ${body.motion}
 
 Case context:
@@ -238,7 +277,10 @@ Return JSON with:
 - answer: your contribution, no heading.
 - keyPoints: 2 to 4 short bullets that can be shown on the card.
 - questions: 0 to 3 useful follow-up questions for the Chair.
-- suggestedActions: 0 to 4 concrete next actions, only if your stance supports them.`;
+- missingQuestions: 0 to 4 case-specific questions that remain unanswered.
+- uncertainty: 0 to 4 limits, caveats, or conditions that would change the view.
+- suggestedActions: 0 to 4 concrete next actions, only if your stance supports them.
+- citations: 0 to 4 source objects with title and url. Use citations only for sources actually used or retrieved.`;
 };
 
 const buildClerkPrompt = (body: ClerkRequest) => {
@@ -248,6 +290,8 @@ const buildClerkPrompt = (body: ClerkRequest) => {
 Stance: ${item.stance}
 Chair review: ${item.review}
 Key points: ${(item.result?.keyPoints ?? []).join("; ") || "None recorded"}
+Uncertainty: ${(item.result?.uncertainty ?? []).join("; ") || "None recorded"}
+Missing questions: ${(item.result?.missingQuestions ?? item.result?.questions ?? []).join("; ") || "None recorded"}
 Suggested actions: ${(item.result?.suggestedActions ?? []).join("; ") || "None recorded"}
 Full contribution: ${item.result?.answer || item.output || "No contribution recorded."}`,
     )
@@ -275,7 +319,9 @@ Rules:
 Return JSON with:
 - minutes: a concise paragraph record of the deliberation.
 - takeaways: 3 to 5 short summary bullets.
-- actions: 3 to 6 concrete proposed action-log items.`;
+- actions: 3 to 6 concrete proposed action-log objects, each with label, detail, owner, and priority.
+- unresolvedQuestions: 0 to 6 unresolved questions the Chair should not lose.
+- reviewSummary: one short line per reviewed archetype noting how its status affected the record.`;
 };
 
 export default defineConfig({
@@ -425,6 +471,9 @@ export default defineConfig({
               minutes: result?.minutes || "",
               takeaways: Array.isArray(result?.takeaways) ? result.takeaways : [],
               actions: Array.isArray(result?.actions) ? result.actions : [],
+              unresolvedQuestions: Array.isArray(result?.unresolvedQuestions) ? result.unresolvedQuestions : [],
+              reviewSummary: Array.isArray(result?.reviewSummary) ? result.reviewSummary : [],
+              draft: result,
               model,
             });
           } catch (error) {

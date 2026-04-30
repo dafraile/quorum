@@ -45,7 +45,10 @@ type AgentResult = {
   answer: string;
   keyPoints: string[];
   questions: string[];
+  missingQuestions: string[];
   suggestedActions: string[];
+  uncertainty: string[];
+  citations: SourceLink[];
 };
 
 type ActionLogEntry = {
@@ -61,6 +64,21 @@ type AnonymizationState = {
   findings: string[];
   createdAt: string;
   approvedForLive: boolean;
+};
+
+type ClerkActionDraft = {
+  label: string;
+  detail: string;
+  owner: string;
+  priority: string;
+};
+
+type ClerkDraft = {
+  minutes: string;
+  takeaways: string[];
+  actions: ClerkActionDraft[];
+  unresolvedQuestions: string[];
+  reviewSummary: string[];
 };
 
 type LoungeMessage = {
@@ -146,6 +164,24 @@ const initialPersisted: PersistedState = {
   customArchetypes: [],
 };
 
+const normalizePersistedAgentResult = (value: any): AgentResult => ({
+  answer: String(value?.answer ?? ""),
+  keyPoints: Array.isArray(value?.keyPoints) ? value.keyPoints.map(String) : [],
+  questions: Array.isArray(value?.questions) ? value.questions.map(String) : [],
+  missingQuestions: Array.isArray(value?.missingQuestions)
+    ? value.missingQuestions.map(String)
+    : Array.isArray(value?.questions)
+      ? value.questions.map(String)
+      : [],
+  suggestedActions: Array.isArray(value?.suggestedActions) ? value.suggestedActions.map(String) : [],
+  uncertainty: Array.isArray(value?.uncertainty) ? value.uncertainty.map(String) : [],
+  citations: Array.isArray(value?.citations)
+    ? value.citations
+        .map((item: any) => ({ title: String(item.title || item.url || "Source"), url: String(item.url || "") }))
+        .filter((item: SourceLink) => item.url)
+    : [],
+});
+
 const loadPersisted = (): PersistedState => {
   const raw = window.localStorage.getItem(storageKey) ?? window.localStorage.getItem(legacyStorageKey);
   if (!raw) return initialPersisted;
@@ -159,7 +195,9 @@ const loadPersisted = (): PersistedState => {
         ...(session.settings ?? {}),
       },
       selectedArchetypes: session.selectedArchetypes ?? defaultSession,
-      results: session.results ?? {},
+      results: Object.fromEntries(
+        Object.entries(session.results ?? {}).map(([id, result]) => [id, normalizePersistedAgentResult(result)]),
+      ),
       outputs: session.outputs ?? {},
       reviews: session.reviews ?? {},
       lounge: session.lounge ?? [],
@@ -209,28 +247,121 @@ const toAgentResult = (text: string, id: ArchetypeId): AgentResult => {
   const clean = text.replace(/\s+/g, " ").trim();
   const sentences = clean.split(/(?<=[.!?])\s+/).filter(Boolean);
   const keyPoints = sentences.slice(0, 3).map((item) => item.replace(/^[*-]\s*/, ""));
+  const questions = sentences.filter((item) => item.includes("?")).slice(0, 3);
 
   return {
     answer: text,
     keyPoints: keyPoints.length ? keyPoints : [`${id} has a contribution ready for review.`],
-    questions: sentences.filter((item) => item.includes("?")).slice(0, 2),
+    questions,
+    missingQuestions: questions,
     suggestedActions: [],
+    uncertainty: sentences.length > 3 ? [sentences[3]] : ["Uncertainty depends on the Chair clarifying the next decision."],
+    citations: [],
   };
 };
 
 const parseAgentResult = (payload: any, id: ArchetypeId): AgentResult => {
   if (payload?.result?.answer) {
+    const result = payload.result;
     return {
-      answer: String(payload.result.answer),
-      keyPoints: Array.isArray(payload.result.keyPoints) ? payload.result.keyPoints.slice(0, 4).map(String) : [],
-      questions: Array.isArray(payload.result.questions) ? payload.result.questions.slice(0, 3).map(String) : [],
-      suggestedActions: Array.isArray(payload.result.suggestedActions)
-        ? payload.result.suggestedActions.slice(0, 4).map(String)
+      answer: String(result.answer),
+      keyPoints: Array.isArray(result.keyPoints) ? result.keyPoints.slice(0, 4).map(String) : [],
+      questions: Array.isArray(result.questions) ? result.questions.slice(0, 3).map(String) : [],
+      missingQuestions: Array.isArray(result.missingQuestions)
+        ? result.missingQuestions.slice(0, 4).map(String)
+        : Array.isArray(result.questions)
+          ? result.questions.slice(0, 3).map(String)
+          : [],
+      suggestedActions: Array.isArray(result.suggestedActions) ? result.suggestedActions.slice(0, 4).map(String) : [],
+      uncertainty: Array.isArray(result.uncertainty) ? result.uncertainty.slice(0, 4).map(String) : [],
+      citations: Array.isArray(result.citations)
+        ? result.citations
+            .slice(0, 4)
+            .map((item: any) => ({ title: String(item.title || item.url || "Source"), url: String(item.url || "") }))
+            .filter((item: SourceLink) => item.url)
         : [],
     };
   }
 
   return toAgentResult(String(payload?.text || ""), id);
+};
+
+const normalizeClerkAction = (item: unknown): ClerkActionDraft => {
+  if (typeof item === "string") {
+    return {
+      label: item.slice(0, 64),
+      detail: item,
+      owner: "Chair",
+      priority: "Next",
+    };
+  }
+
+  const action = item && typeof item === "object" ? (item as Partial<ClerkActionDraft>) : {};
+  const detail = String(action.detail || action.label || "Review and assign this action.");
+
+  return {
+    label: String(action.label || detail.slice(0, 64)),
+    detail,
+    owner: String(action.owner || "Chair"),
+    priority: String(action.priority || "Next"),
+  };
+};
+
+const parseClerkDraft = (payload: any): ClerkDraft | null => {
+  const raw = payload?.draft ?? payload;
+  if (!raw || typeof raw !== "object") return null;
+
+  const actions = Array.isArray(raw.actions) ? raw.actions.map(normalizeClerkAction).slice(0, 8) : [];
+
+  return {
+    minutes: String(raw.minutes || ""),
+    takeaways: Array.isArray(raw.takeaways) ? raw.takeaways.slice(0, 6).map(String) : [],
+    actions,
+    unresolvedQuestions: Array.isArray(raw.unresolvedQuestions) ? raw.unresolvedQuestions.slice(0, 6).map(String) : [],
+    reviewSummary: Array.isArray(raw.reviewSummary) ? raw.reviewSummary.slice(0, 6).map(String) : [],
+  };
+};
+
+const mergeSourceLinks = (...lists: Array<SourceLink[] | undefined>) => {
+  const seen = new Map<string, SourceLink>();
+  lists.flat().forEach((source) => {
+    if (source?.url) seen.set(source.url, source);
+  });
+  return Array.from(seen.values()).slice(0, 6);
+};
+
+const fallbackClerkDraft = (
+  mode: SessionMode,
+  roster: Archetype[],
+  results: Partial<Record<ArchetypeId, AgentResult>>,
+  reviews: Partial<Record<ArchetypeId, ReviewStatus>>,
+): ClerkDraft => {
+  const accepted = roster.filter((agent) => reviews[agent.id] === "accepted");
+  const considered = accepted.length ? accepted : roster;
+  const takeaways = considered
+    .flatMap((agent) => results[agent.id]?.keyPoints ?? [])
+    .filter(Boolean)
+    .slice(0, 5);
+  const actions = considered
+    .flatMap((agent) => results[agent.id]?.suggestedActions ?? [])
+    .filter(Boolean)
+    .slice(0, 6)
+    .map((detail) => normalizeClerkAction({ label: detail, detail, owner: "Chair", priority: "Next" }));
+  const unresolvedQuestions = considered
+    .flatMap((agent) => results[agent.id]?.missingQuestions ?? results[agent.id]?.questions ?? [])
+    .filter(Boolean)
+    .slice(0, 5);
+
+  return {
+    minutes:
+      takeaways.length > 0
+        ? `The Chair reviewed ${considered.length} archetype contribution${considered.length === 1 ? "" : "s"} and preserved the main points for action.`
+        : "The Clerk has prepared a starter record from the available Session state.",
+    takeaways: takeaways.length ? takeaways : defaultPlannerDrafts[mode].slice(0, 3),
+    actions: actions.length ? actions : defaultPlannerDrafts[mode].map((detail) => normalizeClerkAction({ label: detail, detail })),
+    unresolvedQuestions,
+    reviewSummary: roster.map((agent) => `${agent.shortName}: ${statusLabel[reviews[agent.id] ?? "pending"]}`),
+  };
 };
 
 const anonymizationPatterns: Array<{ label: string; pattern: RegExp; replacement: string }> = [
@@ -317,7 +448,7 @@ function App() {
   const [sources, setSources] = useState<Partial<Record<ArchetypeId, SourceLink[]>>>({});
   const [reviews, setReviews] = useState<Partial<Record<ArchetypeId, ReviewStatus>>>({});
   const [plannerVisible, setPlannerVisible] = useState(false);
-  const [clerkDraft, setClerkDraft] = useState<string[]>([]);
+  const [clerkDraft, setClerkDraft] = useState<ClerkDraft | null>(null);
   const [runtime, setRuntime] = useState<RuntimeInfo>({ live: false, model: "gpt-5.5" });
   const [useLiveApi, setUseLiveApi] = useState(true);
   const [tuningCard, setTuningCard] = useState<ArchetypeId | null>(null);
@@ -375,7 +506,7 @@ function App() {
     setSources({});
     setReviews({});
     setPlannerVisible(false);
-    setClerkDraft([]);
+    setClerkDraft(null);
     setQuorumFlash(false);
     setTurnReviewOpen(false);
     setTurnReviewIndex(0);
@@ -395,7 +526,7 @@ function App() {
     setSources({});
     setReviews({});
     setPlannerVisible(false);
-    setClerkDraft([]);
+    setClerkDraft(null);
     setTurnReviewOpen(false);
     setTurnReviewIndex(0);
     setLoungePrompt("");
@@ -422,7 +553,7 @@ function App() {
     setReviews(session.reviews ?? {});
     setSources({});
     setPlannerVisible(false);
-    setClerkDraft([]);
+    setClerkDraft(null);
     setQuorumFlash(false);
     setTurnReviewOpen(false);
     setTurnReviewIndex(0);
@@ -757,11 +888,14 @@ function App() {
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error || "OpenAI API call failed");
 
+      const result = parseAgentResult(payload, id);
       if (payload.sources?.length) {
-        setSources((previous) => ({ ...previous, [id]: payload.sources }));
+        const sourceList = payload.sources as SourceLink[];
+        setSources((previous) => ({ ...previous, [id]: sourceList }));
+        result.citations = [...result.citations, ...sourceList].slice(0, 6);
       }
 
-      return parseAgentResult(payload, id);
+      return result;
     } finally {
       window.clearTimeout(timeout);
     }
@@ -775,7 +909,7 @@ function App() {
     setSources({});
     setReviews({});
     setPlannerVisible(false);
-    setClerkDraft([]);
+    setClerkDraft(null);
     setCallState("calling");
     setQuorumFlash(true);
     appendAction("Session called", `${selectedArchetypes.length} archetype cards were called to the Floor.`);
@@ -983,7 +1117,7 @@ function App() {
 
   const draftPlanner = async () => {
     setPlannerVisible(true);
-    setClerkDraft([]);
+    setClerkDraft(null);
     appendAction("Planner Clerk directed", "The Chair asked the Clerk to synthesize the Session.");
 
     if (liveRuntimeActive) {
@@ -1006,8 +1140,9 @@ function App() {
         });
         const payload = await response.json();
         if (!response.ok) throw new Error(payload.error || "Planner Clerk failed");
-        if (Array.isArray(payload.actions) && payload.actions.length) {
-          setClerkDraft(payload.actions.slice(0, 8).map(String));
+        const draft = parseClerkDraft(payload);
+        if (draft) {
+          setClerkDraft(draft);
           return;
         }
       } catch {
@@ -1015,30 +1150,50 @@ function App() {
       }
     }
 
-    const accepted = selectedRoster.filter((agent) => reviews[agent.id] === "accepted");
-    const summaryActions = accepted.flatMap((agent) => agentResults[agent.id]?.suggestedActions ?? []).filter(Boolean);
-    setClerkDraft(summaryActions.length ? summaryActions.slice(0, 6) : defaultPlannerDrafts[activeSession?.mode ?? "thinking"]);
+    setClerkDraft(fallbackClerkDraft(activeSession?.mode ?? "thinking", selectedRoster, agentResults, reviews));
   };
 
   const commitMinutes = () => {
     if (!activeSession) return;
 
-    const draft = clerkDraft.length ? clerkDraft : defaultPlannerDrafts[activeSession.mode];
-    const minutes = draft.map((item) => `- ${item}`).join("\n");
+    const draft = clerkDraft ?? fallbackClerkDraft(activeSession.mode, selectedRoster, agentResults, reviews);
+    const signedRecord = [
+      `${activeSession.title} signed record`,
+      "",
+      "Summary:",
+      draft.minutes,
+      "",
+      "Takeaways:",
+      ...draft.takeaways.map((item) => `- ${item}`),
+      "",
+      "Actions:",
+      ...draft.actions.map((item) => `- [${item.priority}] ${item.label}: ${item.detail} (${item.owner})`),
+      draft.unresolvedQuestions.length ? "\nUnresolved questions:" : "",
+      ...draft.unresolvedQuestions.map((item) => `- ${item}`),
+    ]
+      .filter(Boolean)
+      .join("\n");
+    const actionEntries: ActionLogEntry[] = draft.actions.map((item) => ({
+      id: createId("act"),
+      at: new Date().toISOString(),
+      label: item.label,
+      detail: `[${item.priority}] ${item.detail} Owner: ${item.owner}.`,
+    }));
 
     updateActiveSession((session) => ({
       ...session,
       minutes: [
-        `${session.title} Minutes committed\n${minutes}`,
-        ...session.minutes.filter((entry) => !entry.startsWith(`${session.title} Minutes`)),
+        signedRecord,
+        ...session.minutes.filter((entry) => !entry.startsWith(`${session.title} signed record`)),
       ],
       actionLog: [
         {
           id: createId("act"),
           at: new Date().toISOString(),
-          label: "Minutes committed",
-          detail: `${draft.length} Clerk items were committed to the session record.`,
+          label: "Record signed",
+          detail: `${draft.actions.length} Clerk actions and ${draft.takeaways.length} takeaways were committed to the session record.`,
         },
+        ...actionEntries,
         ...session.actionLog,
       ].slice(0, 30),
     }));
@@ -1388,7 +1543,7 @@ type FloorProps = {
   onCloseTurnReview: () => void;
   onShowPlanner: () => void;
   onCommit: () => void;
-  clerkDraft: string[];
+  clerkDraft: ClerkDraft | null;
 };
 
 function FloorView({
@@ -1435,6 +1590,8 @@ function FloorView({
   onCommit,
   clerkDraft,
 }: FloorProps) {
+  const visibleClerkDraft = clerkDraft ?? fallbackClerkDraft(session.mode, selectedRoster, agentResults, reviews);
+
   return (
     <section className="floor-layout">
       {(quorumFlash || callState === "calling") && (
@@ -1674,16 +1831,50 @@ function FloorView({
             </button>
           ) : (
             <div className="planner-draft">
-              <span className="mini-label">Planner draft</span>
-              <ul>
-                {(clerkDraft.length ? clerkDraft : defaultPlannerDrafts[session.mode]).map((item) => (
-                  <li key={item}>{item}</li>
-                ))}
-              </ul>
+              <div className="clerk-record">
+                <span className="mini-label">Draft record</span>
+                <p>{visibleClerkDraft.minutes}</p>
+              </div>
+
+              <div className="clerk-draft-grid">
+                <div className="clerk-draft-block">
+                  <span className="mini-label">Key takeaways</span>
+                  <ul>
+                    {visibleClerkDraft.takeaways.map((item) => (
+                      <li key={item}>{item}</li>
+                    ))}
+                  </ul>
+                </div>
+                <div className="clerk-draft-block">
+                  <span className="mini-label">Proposed action log</span>
+                  <ul>
+                    {visibleClerkDraft.actions.map((item) => (
+                      <li key={`${item.label}-${item.detail}`}>
+                        <strong>{item.label}</strong>
+                        <span>
+                          {item.detail} <em>{item.priority} - {item.owner}</em>
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+
+              {visibleClerkDraft.unresolvedQuestions.length > 0 && (
+                <div className="clerk-draft-block unresolved">
+                  <span className="mini-label">Unresolved questions</span>
+                  <ul>
+                    {visibleClerkDraft.unresolvedQuestions.map((item) => (
+                      <li key={item}>{item}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
               <div className="draft-actions">
                 <button className="primary-button" onClick={onCommit} type="button">
                   <FileText size={17} />
-                  Commit Minutes
+                  Sign Record
                 </button>
               </div>
             </div>
@@ -1759,7 +1950,7 @@ function TurnReviewOverlay({
   const agent = roster[safeIndex];
   const result = agent ? agentResults[agent.id] : undefined;
   const output = agent ? outputs[agent.id] ?? result?.answer ?? "" : "";
-  const sourceList = agent ? sources[agent.id] ?? [] : [];
+  const sourceList = agent ? mergeSourceLinks(sources[agent.id], result?.citations) : [];
   const review = agent ? reviews[agent.id] ?? "pending" : "pending";
   const isFirst = safeIndex === 0;
   const isLast = safeIndex >= roster.length - 1;
@@ -1828,6 +2019,31 @@ function TurnReviewOverlay({
                 ))}
               </ul>
             </div>
+
+            {result && (result.uncertainty.length > 0 || result.missingQuestions.length > 0) && (
+              <div className="turn-review-structured">
+                {result.uncertainty.length > 0 && (
+                  <div>
+                    <span className="mini-label">Uncertainty</span>
+                    <ul>
+                      {result.uncertainty.slice(0, 3).map((item) => (
+                        <li key={item}>{item}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {result.missingQuestions.length > 0 && (
+                  <div>
+                    <span className="mini-label">Missing questions</span>
+                    <ul>
+                      {result.missingQuestions.slice(0, 3).map((item) => (
+                        <li key={item}>{item}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            )}
 
             {expanded && (
               <div className="turn-review-expanded">
@@ -2074,6 +2290,7 @@ function AgentCard({
   compact = false,
 }: AgentCardProps) {
   const waiting = callState === "calling" && !output;
+  const sourceList = mergeSourceLinks(sources, result?.citations);
 
   return (
     <article
@@ -2098,6 +2315,26 @@ function AgentCard({
                 <li key={point}>{point}</li>
               ))}
             </ul>
+            {result.uncertainty.length > 0 && (
+              <>
+                <span className="mini-label">Uncertainty</span>
+                <ul className="summary-list muted">
+                  {result.uncertainty.slice(0, 2).map((item) => (
+                    <li key={item}>{item}</li>
+                  ))}
+                </ul>
+              </>
+            )}
+            {result.missingQuestions.length > 0 && (
+              <>
+                <span className="mini-label">Missing questions</span>
+                <ul className="summary-list muted">
+                  {result.missingQuestions.slice(0, 2).map((item) => (
+                    <li key={item}>{item}</li>
+                  ))}
+                </ul>
+              </>
+            )}
           </div>
         ) : null}
         {waiting ? (
@@ -2105,9 +2342,9 @@ function AgentCard({
         ) : output ? (
           <>
             <p>{output}</p>
-            {sources.length > 0 && (
+            {sourceList.length > 0 && (
               <div className="source-list">
-                {sources.map((source) => (
+                {sourceList.map((source) => (
                   <a href={source.url} key={source.url} rel="noreferrer" target="_blank">
                     <ExternalLink size={12} />
                     {source.title}
