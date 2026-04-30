@@ -227,6 +227,21 @@ button:disabled {
   padding: 22px 0 0;
 }
 
+.workbench-panel {
+  min-height: 210px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(360px, 520px);
+  align-items: stretch;
+  gap: 26px;
+  padding: 30px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background:
+    linear-gradient(120deg, rgba(47, 127, 123, 0.12), transparent 44%),
+    linear-gradient(180deg, #fffaf0, #f5eddf);
+  box-shadow: var(--shadow);
+}
+
 .thesis-panel {
   min-height: 210px;
   display: grid;
@@ -257,6 +272,7 @@ button:disabled {
   color: var(--red-dark);
 }
 
+.workbench-panel h1,
 .thesis-panel h1 {
   max-width: 760px;
   margin: 9px 0 12px;
@@ -265,6 +281,7 @@ button:disabled {
   letter-spacing: 0;
 }
 
+.workbench-panel p,
 .thesis-panel p {
   max-width: 760px;
   margin: 0;
@@ -273,8 +290,62 @@ button:disabled {
   line-height: 1.55;
 }
 
-.intake-panel {
+.workbench-copy {
+  display: grid;
+  align-content: end;
+}
+
+.workflow-steps {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.workflow-step {
+  min-height: 92px;
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  grid-template-rows: auto 1fr;
+  column-gap: 10px;
+  row-gap: 4px;
+  padding: 12px;
+  border: 1px solid rgba(53, 48, 40, 0.12);
+  border-radius: 7px;
+  background: rgba(255, 250, 240, 0.64);
+}
+
+.workflow-step-icon {
+  grid-row: 1 / span 2;
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  background: #23211d;
+  color: #fffaf0;
+}
+
+.workflow-step strong {
+  color: #2d2922;
+  font-size: 13px;
+}
+
+.workflow-step small {
+  color: #625a4f;
+  font-size: 12px;
+  font-weight: 750;
+  line-height: 1.35;
+}
+
+.workspace-grid {
   margin-top: 18px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(340px, 420px);
+  gap: 18px;
+  align-items: start;
+}
+
+.intake-panel {
   padding: 18px;
 }
 
@@ -442,6 +513,7 @@ button:disabled {
 .clerk-zone,
 .lounge-zone,
 .intake-panel,
+.sessions-panel,
 .action-log {
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -452,6 +524,11 @@ button:disabled {
 .matter-list,
 .overview-panel {
   min-height: 540px;
+  padding: 18px;
+}
+
+.sessions-panel {
+  min-height: 420px;
   padding: 18px;
 }
 
@@ -721,6 +798,23 @@ button:disabled {
   background: rgba(255, 250, 240, 0.62);
   font-size: 13px;
   text-align: center;
+}
+
+.empty-minutes.compact {
+  min-height: 118px;
+}
+
+.session-minutes {
+  display: grid;
+  gap: 8px;
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.sessions-panel .minutes-entry {
+  min-height: 112px;
+  margin-bottom: 0;
 }
 
 .floor-layout {
@@ -1792,16 +1886,20 @@ button:disabled {
     flex-wrap: wrap;
   }
 
+  .workbench-panel,
   .thesis-panel {
     grid-template-columns: 1fr;
     min-height: auto;
     padding: 22px;
   }
 
+  .workbench-panel h1,
   .thesis-panel h1 {
     font-size: 32px;
   }
 
+  .workflow-steps,
+  .workspace-grid,
   .docket-grid,
   .floor-layout,
   .preview-board,

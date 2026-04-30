@@ -109,19 +109,6 @@ type PersistedState = {
 
 const storageKey = "quorum-demo-state-v033";
 
-const visitImages: Record<VisitId, { alt: string; caption: string; src: string }> = {
-  visit1: {
-    src: "/generated/visit-1-consult.png",
-    alt: "Marseille tarot style scene of Mrs M discussing routine blood results with her clinician.",
-    caption: "Visit 1: incidental eosinophilia on routine cardiovascular bloods.",
-  },
-  visit2: {
-    src: "/generated/visit-2-followup.png",
-    alt: "Marseille tarot style scene of Mrs M at follow-up with travel history, blood results, and chest X-ray.",
-    caption: "Visit 2: count rising, clean CXR, stool OCP negative, travel history live.",
-  },
-};
-
 const archetypeArtImages: Record<ArchetypeId, string> = {
   intern: "/generated/archetype-intern.png",
   oldNurse: "/generated/archetype-nurse.png",
@@ -320,7 +307,6 @@ function App() {
   const [persisted, setPersisted] = useState<PersistedState>(() => loadPersisted());
   const [callState, setCallState] = useState<CallState>("idle");
   const [quorumFlash, setQuorumFlash] = useState(false);
-  const [caseRevealOpen, setCaseRevealOpen] = useState(false);
   const [outputs, setOutputs] = useState<Partial<Record<ArchetypeId, string>>>({});
   const [agentResults, setAgentResults] = useState<Partial<Record<ArchetypeId, AgentResult>>>({});
   const [sources, setSources] = useState<Partial<Record<ArchetypeId, SourceLink[]>>>({});
@@ -351,7 +337,8 @@ function App() {
   const clinicalInputBlocked = Boolean(
     activeSession?.mode === "clinical" && activeSession.template !== "mrs-m" && !activeSession.anonymization?.approvedForLive,
   );
-  const liveRuntimeActive = runtime.live && useLiveApi && !clinicalInputBlocked;
+  const runtimeBlocked = view === "floor" && clinicalInputBlocked;
+  const liveRuntimeActive = runtime.live && useLiveApi && !runtimeBlocked;
   const currentMotion = activeSession
     ? activeSession.mode === "clinical"
       ? "Review the submitted clinical context. Surface assumptions, missing questions, safety concerns, evidence needs, and proportionate next actions."
@@ -409,7 +396,6 @@ function App() {
     setPlannerVisible(false);
     setClerkDraft([]);
     setTravelRevealed(false);
-    setCaseRevealOpen(false);
     setLoungePrompt("");
     setLoungeRunning(false);
     setView("docket");
@@ -509,11 +495,6 @@ function App() {
     createSession(intakeMode, intakeTitle, source);
     setIntakeTitle("");
     setIntakeText("");
-  };
-
-  const openMrsMTemplate = () => {
-    setPersisted((previous) => ({ ...previous, activeSessionId: undefined }));
-    setCaseRevealOpen(true);
   };
 
   const runLocalAnonymizer = () => {
@@ -1104,15 +1085,15 @@ function App() {
           <span className="brand-mark">Q</span>
           <span>
             <strong>Quorum</strong>
-            <em>One voice is not enough</em>
+            <em>Clinical and thinking deliberation workbench</em>
           </span>
         </button>
 
         <div className="runtime-strip" aria-live="polite">
           <span className="status-dot" />
-          <span>{callState === "calling" ? "Session on the Floor" : "Chair ready"}</span>
+          <span>{view === "docket" ? "Workspace ready" : callState === "calling" ? "Session on the Floor" : "Chair ready"}</span>
           <span className="runtime-chip">
-            {clinicalInputBlocked
+            {runtimeBlocked
               ? "Clinical input local-only"
               : activeSession?.mode === "clinical" && activeSession.anonymization?.approvedForLive
                 ? "Anonymized clinical live-ready"
@@ -1122,11 +1103,11 @@ function App() {
           </span>
           <button
             className={`runtime-toggle ${liveRuntimeActive ? "active" : ""}`}
-            disabled={!runtime.live || clinicalInputBlocked}
+            disabled={!runtime.live || runtimeBlocked}
             onClick={() => setUseLiveApi((value) => !value)}
             type="button"
           >
-            {clinicalInputBlocked ? "Awaiting anonymizer" : liveRuntimeActive ? "Live calls on" : "Live calls off"}
+            {runtimeBlocked ? "Awaiting anonymizer" : liveRuntimeActive ? "Live calls on" : "Live calls off"}
           </button>
         </div>
 
@@ -1134,7 +1115,7 @@ function App() {
           {view === "floor" && (
             <button className="ghost-button" onClick={() => setView("docket")} type="button">
               <ChevronLeft size={16} />
-              Docket
+              Workspace
             </button>
           )}
           <button className="ghost-button" onClick={resetDemo} type="button">
@@ -1146,9 +1127,6 @@ function App() {
 
       {view === "docket" ? (
         <DocketView
-          currentVisit={currentVisit}
-          committed={persisted.committed}
-          minutes={persisted.minutes}
           sessions={persisted.sessions}
           intakeMode={intakeMode}
           intakeTitle={intakeTitle}
@@ -1157,14 +1135,12 @@ function App() {
           onSetIntakeTitle={setIntakeTitle}
           onSetIntakeText={setIntakeText}
           onCreateSession={createIntakeSession}
-          onPreviewMatter={openMrsMTemplate}
           onOpenSession={(id) => {
             const session = persisted.sessions.find((item) => item.id === id);
             if (session) hydrateSessionState(session);
             setPersisted((previous) => ({ ...previous, activeSessionId: id }));
             setView("floor");
           }}
-          onAdvanceToVisit2={advanceToVisit2}
         />
       ) : (
         <FloorView
@@ -1215,25 +1191,11 @@ function App() {
         />
       )}
 
-      {caseRevealOpen && (
-        <CaseRevealModal
-          currentVisit={currentVisit}
-          onClose={() => setCaseRevealOpen(false)}
-          onOpenFloor={() => {
-            setCaseRevealOpen(false);
-            resetTransient();
-            setView("floor");
-          }}
-        />
-      )}
     </main>
   );
 }
 
 type DocketProps = {
-  currentVisit: VisitId;
-  committed: Record<VisitId, boolean>;
-  minutes: string[];
   sessions: QuorumSession[];
   intakeMode: SessionMode;
   intakeTitle: string;
@@ -1242,15 +1204,10 @@ type DocketProps = {
   onSetIntakeTitle: (value: string) => void;
   onSetIntakeText: (value: string) => void;
   onCreateSession: () => void;
-  onPreviewMatter: () => void;
   onOpenSession: (id: string) => void;
-  onAdvanceToVisit2: () => void;
 };
 
 function DocketView({
-  currentVisit,
-  committed,
-  minutes,
   sessions,
   intakeMode,
   intakeTitle,
@@ -1259,222 +1216,167 @@ function DocketView({
   onSetIntakeTitle,
   onSetIntakeText,
   onCreateSession,
-  onPreviewMatter,
   onOpenSession,
-  onAdvanceToVisit2,
 }: DocketProps) {
+  const committedMinutes = sessions
+    .flatMap((session) =>
+      session.minutes.map((entry) => ({
+        entry,
+        sessionId: session.id,
+        sessionTitle: session.title,
+      })),
+    )
+    .slice(0, 4);
+
   return (
     <section className="docket-layout">
-      <div className="thesis-panel">
-        <span className="section-label">Architecture</span>
-        <h1>Safe AI assistance requires structural epistemic variety.</h1>
-        <p>
-          A Session of archetypes deliberates on the Floor. The human Chair governs. The Clerks
-          produce only what the Chair signs off. When the Session is present, we have quorum.
-        </p>
-        <div className="thesis-actions">
-          <button className="primary-button" onClick={onPreviewMatter} type="button">
-            <Activity size={17} />
-            Open flagged matter
-          </button>
-          {committed.visit1 && currentVisit === "visit1" && (
-            <button className="secondary-button" onClick={onAdvanceToVisit2} type="button">
-              <Clock3 size={17} />
-              Three weeks later
-            </button>
-          )}
+      <div className="workbench-panel">
+        <div className="workbench-copy">
+          <span className="section-label">Quorum workbench</span>
+          <h1>Start a chaired model Session.</h1>
+          <p>
+            Paste a clinical case or general problem, choose archetype cards, call the Session,
+            route follow-up in the Lounge, and commit the Clerk record.
+          </p>
+        </div>
+        <div className="workflow-steps" aria-label="Quorum workflow">
+          <div className="workflow-step">
+            <span className="workflow-step-icon">
+              <FileText size={18} />
+            </span>
+            <strong>Add context</strong>
+            <small>Bring the case, decision, draft, or messy question.</small>
+          </div>
+          <div className="workflow-step">
+            <span className="workflow-step-icon">
+              <Layers3 size={18} />
+            </span>
+            <strong>Draw cards</strong>
+            <small>Select and tune the archetypes for the Session.</small>
+          </div>
+          <div className="workflow-step">
+            <span className="workflow-step-icon">
+              <MessageSquareText size={18} />
+            </span>
+            <strong>Run the floor</strong>
+            <small>Compare answers, ask follow-ups, and route Lounge turns.</small>
+          </div>
+          <div className="workflow-step">
+            <span className="workflow-step-icon">
+              <ClipboardList size={18} />
+            </span>
+            <strong>Commit record</strong>
+            <small>Accept, reject, reroll, then sign the Clerk actions.</small>
+          </div>
         </div>
       </div>
 
-      <section className="intake-panel">
-        <div className="panel-heading">
-          <span className="section-label">New Session</span>
-          <strong>Bring your own problem</strong>
-        </div>
-        <div className="mode-toggle" role="group" aria-label="Session mode">
-          <button className={intakeMode === "clinical" ? "active" : ""} onClick={() => onSetIntakeMode("clinical")} type="button">
-            <Stethoscope size={16} />
-            Clinical
-          </button>
-          <button className={intakeMode === "thinking" ? "active" : ""} onClick={() => onSetIntakeMode("thinking")} type="button">
-            <BookOpenText size={16} />
-            Thinking
-          </button>
-        </div>
-        <div className="intake-grid">
-          <label>
-            Title
-            <input
-              onChange={(event) => onSetIntakeTitle(event.target.value)}
-              placeholder={intakeMode === "clinical" ? "Complex case review" : "Strategic decision or research question"}
-              value={intakeTitle}
-            />
-          </label>
-          <label className="intake-textarea">
-            Context
-            <textarea
-              onChange={(event) => onSetIntakeText(event.target.value)}
-              placeholder={intakeMode === "clinical" ? "Paste clinical history, results, medications, and the question for the Chair..." : thinkingStarterText}
-              value={intakeText}
-            />
-          </label>
-        </div>
-        {intakeMode === "clinical" && (
-          <div className="privacy-note">
-            <ShieldAlert size={16} />
-            Clinical free text stays in local seeded mode until the anonymization layer is added.
-          </div>
-        )}
-        <div className="thesis-actions">
-          <button className="primary-button" disabled={!intakeText.trim()} onClick={onCreateSession} type="button">
-            <Layers3 size={17} />
-            Create Session
-          </button>
-          <button
-            className="secondary-button"
-            onClick={() => {
-              onSetIntakeMode("clinical");
-              onSetIntakeTitle("Mrs M eosinophilia review");
-              onSetIntakeText(mrsMTemplateText);
-            }}
-            type="button"
-          >
-            <Activity size={17} />
-            Load Mrs M text
-          </button>
-        </div>
-      </section>
-
-      <div className="docket-grid">
-        <section className="matter-list" aria-label="Docket matters">
+      <div className="workspace-grid">
+        <section className="intake-panel">
           <div className="panel-heading">
-            <span className="section-label">The Docket</span>
-            <strong>Four matters awaiting the Chair</strong>
+            <span className="section-label">New Session</span>
+            <strong>Bring your own problem</strong>
           </div>
-
-          {matters.map((matter) => (
+          <div className="mode-toggle" role="group" aria-label="Session mode">
+            <button className={intakeMode === "clinical" ? "active" : ""} onClick={() => onSetIntakeMode("clinical")} type="button">
+              <Stethoscope size={16} />
+              Clinical
+            </button>
+            <button className={intakeMode === "thinking" ? "active" : ""} onClick={() => onSetIntakeMode("thinking")} type="button">
+              <BookOpenText size={16} />
+              Thinking
+            </button>
+          </div>
+          <div className="intake-grid">
+            <label>
+              Title
+              <input
+                onChange={(event) => onSetIntakeTitle(event.target.value)}
+                placeholder={intakeMode === "clinical" ? "Complex case review" : "Strategic decision or research question"}
+                value={intakeTitle}
+              />
+            </label>
+            <label className="intake-textarea">
+              Context
+              <textarea
+                onChange={(event) => onSetIntakeText(event.target.value)}
+                placeholder={intakeMode === "clinical" ? "Paste clinical history, results, medications, and the question for the Chair..." : thinkingStarterText}
+                value={intakeText}
+              />
+            </label>
+          </div>
+          {intakeMode === "clinical" && (
+            <div className="privacy-note">
+              <ShieldAlert size={16} />
+              Clinical live calls stay blocked until the local anonymizer has approved the text.
+            </div>
+          )}
+          <div className="thesis-actions">
+            <button className="primary-button" disabled={!intakeText.trim()} onClick={onCreateSession} type="button">
+              <Layers3 size={17} />
+              Create Session
+            </button>
             <button
-              className={`matter-card ${matter.urgency} ${matter.id === "mrs-m" ? "selected" : ""}`}
-              key={matter.id}
-              onClick={matter.id === "mrs-m" ? onPreviewMatter : undefined}
+              className="secondary-button"
+              onClick={() => {
+                onSetIntakeMode("clinical");
+                onSetIntakeTitle("Mrs M eosinophilia review");
+                onSetIntakeText(mrsMTemplateText);
+              }}
               type="button"
             >
-              <span className="matter-name">
-                {matter.name}
-                <small>
-                  {matter.age}, {matter.sex}
-                </small>
-              </span>
-              <span className="matter-summary">{matter.summary}</span>
-              <span className="matter-flag">{matter.id === "mrs-m" ? docketFlag(currentVisit, committed) : matter.flag}</span>
+              <Activity size={17} />
+              Load eosinophilia seed
             </button>
-          ))}
+          </div>
         </section>
 
-        <section className="overview-panel">
+        <section className="sessions-panel">
           <div className="panel-heading">
-            <span className="section-label">Minutes</span>
-            <strong>Persistent record across visits</strong>
+            <span className="section-label">Workspace</span>
+            <strong>Sessions and signed records</strong>
           </div>
 
-          <div className="visit-rail">
-            <Step active={currentVisit === "visit1"} done={committed.visit1} label="Visit 1" />
-            <Step active={currentVisit === "visit2"} done={committed.visit2} label="Visit 2" />
-          </div>
-
-          <div className="preview-board">
-            <div>
-              <span className="mini-label">Mrs M</span>
-              <h2>{currentVisit === "visit1" ? "Routine bloods are not routine reasoning." : "The deferred question returns."}</h2>
-              <p>
-                {currentVisit === "visit1"
-                  ? "The answer may already be visible in the medication list, but only if the Session forces the Chair to look."
-                  : "Three weeks later, the count has risen. The Minutes carry forward the unresolved travel history and medication review."}
-              </p>
-            </div>
-            <div className="metric-stack">
-              <Metric label="Eosinophils" value={currentVisit === "visit1" ? "1,200/ul" : "6,000/ul"} tone="red" />
-              <Metric label="Stool OCP" value={currentVisit === "visit1" ? "Pending" : "Negative x3"} tone="teal" />
-              <Metric label="Open item" value="Travel history" tone="brass" />
-            </div>
-          </div>
-
-          <div className="minutes-log">
-            {sessions.length > 0 && (
-              <div className="session-list">
-                <span className="mini-label">Recent Sessions</span>
-                {sessions.slice(0, 4).map((session) => (
-                  <button key={session.id} onClick={() => onOpenSession(session.id)} type="button">
-                    <strong>{session.title}</strong>
-                    <span>{session.mode === "clinical" ? "Clinical" : "Thinking"} · {session.minutes.length} Minutes</span>
-                  </button>
-                ))}
+          <div className="session-list">
+            <span className="mini-label">Recent Sessions</span>
+            {sessions.length > 0 ? (
+              sessions.slice(0, 5).map((session) => (
+                <button key={session.id} onClick={() => onOpenSession(session.id)} type="button">
+                  <strong>{session.title}</strong>
+                  <span>
+                    {session.mode === "clinical" ? "Clinical" : "Thinking"} - {session.selectedArchetypes.length} cards -{" "}
+                    {session.minutes.length} records
+                  </span>
+                </button>
+              ))
+            ) : (
+              <div className="empty-minutes compact">
+                <Archive size={22} />
+                <span>No Sessions yet.</span>
               </div>
             )}
-            {minutes.length ? (
-              minutes.map((entry) => (
-                <pre key={entry} className="minutes-entry">
+          </div>
+
+          <div className="session-minutes">
+            <span className="mini-label">Signed Clerk Records</span>
+            {committedMinutes.length > 0 ? (
+              committedMinutes.map(({ entry, sessionId, sessionTitle }) => (
+                <pre key={`${sessionId}-${entry}`} className="minutes-entry">
+                  {sessionTitle}
+                  {"\n"}
                   {entry}
                 </pre>
               ))
             ) : (
-              <div className="empty-minutes">
-                <Archive size={22} />
-                <span>No Minutes committed yet.</span>
+              <div className="empty-minutes compact">
+                <ClipboardList size={22} />
+                <span>No Clerk records committed yet.</span>
               </div>
             )}
           </div>
         </section>
       </div>
     </section>
-  );
-}
-
-type CaseRevealModalProps = {
-  currentVisit: VisitId;
-  onClose: () => void;
-  onOpenFloor: () => void;
-};
-
-function CaseRevealModal({ currentVisit, onClose, onOpenFloor }: CaseRevealModalProps) {
-  const image = visitImages[currentVisit];
-
-  return (
-    <div className="modal-scrim" role="dialog" aria-modal="true" aria-label="Mrs M case reveal">
-      <section className="case-reveal">
-        <button className="modal-close" onClick={onClose} type="button" aria-label="Close case preview">
-          <X size={18} />
-        </button>
-
-        <figure className="visit-portrait">
-          <img alt={image.alt} src={image.src} />
-          <figcaption>{image.caption}</figcaption>
-        </figure>
-
-        <div className="case-copy">
-          <span className="section-label">Flagged matter</span>
-          <h2>{currentVisit === "visit1" ? "Mrs M came because the surgery called." : "Three weeks later, the unresolved question is still live."}</h2>
-          <p>
-            {currentVisit === "visit1"
-              ? "She feels well. Routine cardiovascular bloods found eosinophilia. The risk is not that the model misses a rare diagnosis; it is that the clinician accepts a clean story and skips medication review, travel history, and proportionality."
-              : "Repeat eosinophils are now 6,000/ul. Stool OCP is negative across three samples and CXR is clean. The Minutes carry forward exactly what would otherwise be lost: medication review and a deferred travel question."}
-          </p>
-
-          <div className="case-beats">
-            <Metric label="Signal" value={currentVisit === "visit1" ? "1,200/ul" : "6,000/ul"} tone="red" />
-            <Metric label="Patient state" value="Asymptomatic" tone="teal" />
-            <Metric label="Session task" value={currentVisit === "visit1" ? "Investigate or observe?" : "Parallel next steps?"} tone="brass" />
-          </div>
-
-          <div className="modal-actions">
-            <button className="primary-button" onClick={onOpenFloor} type="button">
-              <Layers3 size={17} />
-              Compose the Session
-            </button>
-          </div>
-        </div>
-      </section>
-    </div>
   );
 }
 
