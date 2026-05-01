@@ -43,10 +43,17 @@ type CallState = "idle" | "calling" | "complete";
 type SourceLink = { title: string; url: string };
 type RuntimeInfo = { live: boolean; model: string };
 type SessionMode = "clinical" | "thinking";
+type AnonymizationEngineId = "local-pattern" | "microsoft-fhir-dicom-adapter";
 type PersistenceStatus = {
   state: "loading" | "synced" | "local" | "imported" | "error";
   label: string;
   detail: string;
+};
+type PrivacyPreflight = {
+  state: "clear" | "blocked" | "review";
+  label: string;
+  detail: string;
+  payload: string;
 };
 
 type AgentResult = {
@@ -71,9 +78,13 @@ type AnonymizationState = {
   redactionCount: number;
   findings: string[];
   riskFlags: string[];
+  engineId: AnonymizationEngineId;
+  engineName: string;
+  engineScope: string;
   engineVersion: string;
   createdAt: string;
   editedAt?: string;
+  approvedAt?: string;
   approvedForLive: boolean;
 };
 
@@ -210,9 +221,13 @@ const normalizeAnonymizationState = (value: any): AnonymizationState | undefined
     redactionCount: Number(value.redactionCount ?? 0),
     findings: Array.isArray(value.findings) ? value.findings.map(String) : [],
     riskFlags: Array.isArray(value.riskFlags) ? value.riskFlags.map(String) : [],
+    engineId: (value.engineId ?? "local-pattern") as AnonymizationEngineId,
+    engineName: String(value.engineName ?? "Local browser pattern preflight"),
+    engineScope: String(value.engineScope ?? "Free-text clinical preflight; backend FHIR/DICOM adapter pending."),
     engineVersion: String(value.engineVersion ?? "local-pattern-v1"),
     createdAt: String(value.createdAt ?? new Date().toISOString()),
     editedAt: value.editedAt ? String(value.editedAt) : undefined,
+    approvedAt: value.approvedAt ? String(value.approvedAt) : undefined,
     approvedForLive: Boolean(value.approvedForLive),
   };
 };
@@ -724,6 +739,9 @@ const anonymizeClinicalText = (text: string): AnonymizationState => {
     redactionCount,
     findings: findings.length ? findings : ["No obvious direct identifiers detected by local pattern scan."],
     riskFlags,
+    engineId: "local-pattern",
+    engineName: "Local browser pattern preflight",
+    engineScope: "Free-text clinical preflight. Microsoft Health Data Anonymization remains a backend FHIR/DICOM adapter target.",
     engineVersion: anonymizationEngineVersion,
     createdAt: new Date().toISOString(),
     approvedForLive: false,
@@ -732,6 +750,60 @@ const anonymizeClinicalText = (text: string): AnonymizationState => {
 
 const sessionWorkingText = (session: QuorumSession) =>
   session.mode === "clinical" && session.anonymization ? session.anonymization.anonymizedText : session.sourceText;
+
+const privacyPreflightFor = (session?: QuorumSession): PrivacyPreflight => {
+  if (!session) {
+    return {
+      state: "blocked",
+      label: "No active Session",
+      detail: "Create or open a Session before live calls.",
+      payload: "No payload prepared.",
+    };
+  }
+
+  if (session.mode !== "clinical") {
+    return {
+      state: "clear",
+      label: "General thinking Session",
+      detail: "Live calls can use the submitted problem statement.",
+      payload: "General text is sent as provided when live calls are on.",
+    };
+  }
+
+  if (!session.anonymization) {
+    return {
+      state: "blocked",
+      label: "Clinical text local-only",
+      detail: "Run the local anonymizer before enabling live model calls.",
+      payload: "Raw clinical text stays in the browser.",
+    };
+  }
+
+  if (session.anonymization.riskFlags.length > 0) {
+    return {
+      state: "review",
+      label: "Residual identifiers need review",
+      detail: "Edit the anonymized text until the local scan no longer flags direct identifiers.",
+      payload: "Live clinical calls remain blocked.",
+    };
+  }
+
+  if (!session.anonymization.approvedForLive) {
+    return {
+      state: "review",
+      label: "Reviewed text awaiting approval",
+      detail: "Approve the anonymized text to enable live model calls.",
+      payload: "No clinical payload will be sent yet.",
+    };
+  }
+
+  return {
+    state: "clear",
+    label: "Anonymized payload live-ready",
+    detail: "Only the reviewed anonymized text will be sent to model calls.",
+    payload: `${session.anonymization.engineName} - ${session.anonymization.engineVersion}`,
+  };
+};
 
 const statusLabel: Record<ReviewStatus, string> = {
   pending: "Pending",
@@ -1141,12 +1213,21 @@ function App() {
   const setClinicalLiveApproval = (approvedForLive: boolean) => {
     if (!activeSession?.anonymization) return;
 
+    if (approvedForLive && activeSession.anonymization.riskFlags.length > 0) {
+      appendAction(
+        "Anonymized approval blocked",
+        `${activeSession.anonymization.riskFlags.length} residual identifier flags must be resolved before live clinical calls.`,
+      );
+      return;
+    }
+
     updateActiveSession((session) => ({
       ...session,
       anonymization: session.anonymization
         ? {
             ...session.anonymization,
             approvedForLive,
+            approvedAt: approvedForLive ? new Date().toISOString() : undefined,
           }
         : session.anonymization,
       actionLog: [
@@ -1174,6 +1255,7 @@ function App() {
             ...session.anonymization,
             anonymizedText: value,
             approvedForLive: false,
+            approvedAt: undefined,
             editedAt: now,
             riskFlags: residualRiskFlagsFor(value),
           }
@@ -1304,6 +1386,8 @@ function App() {
       `Session title: ${activeSession.title}`,
       `Mode: ${activeSession.mode}`,
       parentSession ? `Linked previous Session: ${parentSession.title}` : "",
+      `Privacy preflight: ${privacyPreflightFor(activeSession).label}`,
+      `Payload status: ${privacyPreflightFor(activeSession).payload}`,
       activeSession.mode === "clinical" && activeSession.anonymization
         ? "Submitted context after local anonymization:"
         : "Submitted context:",
@@ -2479,6 +2563,7 @@ function FloorView({
               anonymization={session.anonymization}
               onApprove={() => onSetClinicalLiveApproval(true)}
               onPause={() => onSetClinicalLiveApproval(false)}
+              preflight={privacyPreflightFor(session)}
               onRun={onRunAnonymizer}
               onUpdateText={onUpdateAnonymizedText}
             />
@@ -2972,18 +3057,26 @@ function AnonymizationPanel({
   anonymization,
   onApprove,
   onPause,
+  preflight,
   onRun,
   onUpdateText,
 }: {
   anonymization?: AnonymizationState;
   onApprove: () => void;
   onPause: () => void;
+  preflight: PrivacyPreflight;
   onRun: () => void;
   onUpdateText: (value: string) => void;
 }) {
   if (!anonymization) {
     return (
       <div className="anonymizer-card">
+        <div className={`privacy-preflight ${preflight.state}`}>
+          <span className="mini-label">Privacy preflight</span>
+          <strong>{preflight.label}</strong>
+          <p>{preflight.detail}</p>
+          <small>{preflight.payload}</small>
+        </div>
         <div className="privacy-note compact">
           <ShieldAlert size={15} />
           Clinical free text is local-only until reviewed.
@@ -2998,6 +3091,12 @@ function AnonymizationPanel({
 
   return (
     <div className="anonymizer-card">
+      <div className={`privacy-preflight ${preflight.state}`}>
+        <span className="mini-label">Privacy preflight</span>
+        <strong>{preflight.label}</strong>
+        <p>{preflight.detail}</p>
+        <small>{preflight.payload}</small>
+      </div>
       <div className={`anonymizer-status ${anonymization.approvedForLive ? "approved" : ""}`}>
         <strong>{anonymization.approvedForLive ? "Anonymized live calls enabled" : "Anonymized text ready for review"}</strong>
         <span>
@@ -3020,6 +3119,12 @@ function AnonymizationPanel({
           <span>No obvious direct identifiers remain after the local scan.</span>
         </div>
       )}
+      <div className="anonymizer-engine">
+        <span className="mini-label">Engine</span>
+        <strong>{anonymization.engineName}</strong>
+        <p>{anonymization.engineScope}</p>
+        {anonymization.approvedAt && <small>Approved {formatDateTime(anonymization.approvedAt)}</small>}
+      </div>
       <textarea
         aria-label="Editable anonymized clinical text"
         className="anonymizer-editor"
@@ -3031,8 +3136,8 @@ function AnonymizationPanel({
           Pause live clinical calls
         </button>
       ) : (
-        <button className="primary-button" onClick={onApprove} type="button">
-          Approve reviewed text for live calls
+        <button className="primary-button" disabled={anonymization.riskFlags.length > 0} onClick={onApprove} type="button">
+          {anonymization.riskFlags.length > 0 ? "Resolve residual flags before live calls" : "Approve reviewed text for live calls"}
         </button>
       )}
     </div>

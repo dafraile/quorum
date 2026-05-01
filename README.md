@@ -11,8 +11,8 @@ The app supports both clinical-facing review and general thinking sessions. Clin
 The current product surface includes:
 
 - A workspace intake for clinical cases or general problems.
-- Local clinical text anonymization before live API use.
-- Persistent Sessions stored in localStorage.
+- Local clinical text anonymization with a privacy preflight before live API use.
+- Persistent Sessions stored in IndexedDB with localStorage fallback and JSON backup/import.
 - Session composition with default, opt-in, and custom archetype cards.
 - The "We have quorum" call moment.
 - Live OpenAI calls when a server-side API key is present.
@@ -58,7 +58,7 @@ The browser calls local endpoints (`/api/runtime`, `/api/agent`, `/api/lounge`, 
 1. Choose Clinical or Thinking mode.
 2. Paste the case, problem, decision, draft, or question.
 3. Create the Session.
-4. Run the local anonymizer for clinical text before enabling live calls.
+4. Run the local anonymizer for clinical text and resolve residual preflight flags before enabling live calls.
 5. Draw and tune archetype cards.
 6. Call the Session and review the archetype outputs.
 7. Ask direct follow-ups or route a Lounge turn between archetypes.
@@ -70,5 +70,9 @@ The browser calls local endpoints (`/api/runtime`, `/api/agent`, `/api/lounge`, 
 The current app supports both live OpenAI calls and deterministic local outputs, so sessions remain usable during network, auth, latency, rate limit, or search-quality failures.
 
 The runtime is intentionally shaped around a future OpenAI Responses API or Agents SDK integration: each archetype has a stable ID, promptable stance, output zone, review state, and Clerk handoff point. The Biblio Rat is the first candidate for live tool use: literature search, evidence summary, and citation trace.
+
+## Anonymization stance
+
+The current clinical privacy path is a local browser free-text preflight. It redacts common identifiers, flags residual risk, and blocks live clinical calls until reviewed text is approved. The Microsoft [Tools for Health Data Anonymization](https://github.com/microsoft/Tools-for-Health-Data-Anonymization) project remains the intended backend adapter target for proper FHIR/DICOM anonymization.
 
 Do not pitch this as diagnosis. The architecture surfaces deliberation; the Chair decides.
