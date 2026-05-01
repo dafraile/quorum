@@ -6,9 +6,11 @@ import {
   ChevronLeft,
   ChevronRight,
   ClipboardList,
+  Download,
   ExternalLink,
   FileText,
   Gavel,
+  GitBranch,
   Layers3,
   MessageSquareText,
   RefreshCcw,
@@ -106,11 +108,13 @@ type QuorumSession = {
   minutes: string[];
   actionLog: ActionLogEntry[];
   anonymization?: AnonymizationState;
+  archivedAt?: string;
   createdAt: string;
   updatedAt: string;
 };
 
 type PersistedState = {
+  schemaVersion: number;
   selectedArchetypes: ArchetypeId[];
   settings: Record<ArchetypeId, AgentSettings>;
   sessions: QuorumSession[];
@@ -120,6 +124,7 @@ type PersistedState = {
 
 const storageKey = "quorum-state-v1";
 const legacyStorageKey = "quorum-demo-state-v033";
+const storageVersion = 2;
 
 const defaultPlannerDrafts: Record<SessionMode, string[]> = {
   clinical: [
@@ -160,6 +165,7 @@ const thinkingStarterText =
   "Paste a strategic problem, research question, product decision, conflict, draft, or messy thought here. Quorum will turn it into a chaired Session instead of one undifferentiated answer.";
 
 const initialPersisted: PersistedState = {
+  schemaVersion: storageVersion,
   selectedArchetypes: defaultSession,
   settings: defaultAgentSettings,
   sessions: [],
@@ -205,9 +211,11 @@ const loadPersisted = (): PersistedState => {
       lounge: session.lounge ?? [],
       minutes: session.minutes ?? [],
       actionLog: session.actionLog ?? [],
+      archivedAt: session.archivedAt,
     }));
 
     return {
+      schemaVersion: storageVersion,
       selectedArchetypes: parsed.selectedArchetypes ?? initialPersisted.selectedArchetypes,
       settings: {
         ...defaultAgentSettings,
@@ -244,6 +252,161 @@ const iconForArchetype = (id: ArchetypeId) => {
 };
 
 const createId = (prefix: string) => `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+
+type LedgerRow = {
+  session: QuorumSession;
+  depth: number;
+};
+
+const formatDateTime = (value?: string) => {
+  if (!value) return "Not recorded";
+
+  try {
+    return new Intl.DateTimeFormat(undefined, {
+      dateStyle: "medium",
+      timeStyle: "short",
+    }).format(new Date(value));
+  } catch {
+    return value;
+  }
+};
+
+const sanitizeFileName = (value: string) =>
+  value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80) || "quorum-session";
+
+const buildLedgerRows = (sessions: QuorumSession[], showArchived: boolean): LedgerRow[] => {
+  const included = sessions.filter((session) => showArchived || !session.archivedAt);
+  const byId = new Map(included.map((session) => [session.id, session]));
+  const childrenByParent = new Map<string, QuorumSession[]>();
+
+  included.forEach((session) => {
+    if (!session.parentSessionId || !byId.has(session.parentSessionId)) return;
+    const children = childrenByParent.get(session.parentSessionId) ?? [];
+    children.push(session);
+    childrenByParent.set(session.parentSessionId, children);
+  });
+
+  childrenByParent.forEach((children) => {
+    children.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  });
+
+  const roots = included
+    .filter((session) => !session.parentSessionId || !byId.has(session.parentSessionId))
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  const rows: LedgerRow[] = [];
+
+  const visit = (session: QuorumSession, depth: number) => {
+    rows.push({ session, depth });
+    (childrenByParent.get(session.id) ?? []).forEach((child) => visit(child, depth + 1));
+  };
+
+  roots.forEach((session) => visit(session, 0));
+  return rows;
+};
+
+const buildSessionChain = (sessions: QuorumSession[], sessionId: string, showArchived = true): LedgerRow[] => {
+  const included = sessions.filter((session) => showArchived || !session.archivedAt);
+  const byId = new Map(included.map((session) => [session.id, session]));
+  let root = byId.get(sessionId);
+  if (!root) return [];
+
+  const seen = new Set<string>();
+  while (root.parentSessionId && !seen.has(root.id)) {
+    const parent = byId.get(root.parentSessionId);
+    if (!parent) break;
+    seen.add(root.id);
+    root = parent;
+  }
+
+  const childrenByParent = new Map<string, QuorumSession[]>();
+  included.forEach((session) => {
+    if (!session.parentSessionId) return;
+    const children = childrenByParent.get(session.parentSessionId) ?? [];
+    children.push(session);
+    childrenByParent.set(session.parentSessionId, children);
+  });
+  childrenByParent.forEach((children) => children.sort((a, b) => a.createdAt.localeCompare(b.createdAt)));
+
+  const rows: LedgerRow[] = [];
+  const visit = (session: QuorumSession, depth: number) => {
+    rows.push({ session, depth });
+    (childrenByParent.get(session.id) ?? []).forEach((child) => visit(child, depth + 1));
+  };
+
+  visit(root, 0);
+  return rows;
+};
+
+const formatSessionMarkdown = (session: QuorumSession, sessions: QuorumSession[]) => {
+  const parent = session.parentSessionId ? sessions.find((item) => item.id === session.parentSessionId) : undefined;
+  const records = session.minutes.length
+    ? session.minutes.map((entry, index) => `### Signed record ${index + 1}\n\n${entry}`).join("\n\n")
+    : "No signed Clerk records yet.";
+  const actions = session.actionLog.length
+    ? session.actionLog.map((entry) => `- ${formatDateTime(entry.at)} - ${entry.label}: ${entry.detail}`).join("\n")
+    : "No action-log entries yet.";
+  const outputs = Object.entries(session.results)
+    .map(([id, result]) => {
+      const points = result?.keyPoints?.length ? result.keyPoints.map((point) => `  - ${point}`).join("\n") : "  - No key points recorded.";
+      return `- ${id}\n${points}`;
+    })
+    .join("\n");
+
+  return [
+    `# ${session.title}`,
+    [
+      `- Mode: ${session.mode}`,
+      `- Created: ${formatDateTime(session.createdAt)}`,
+      `- Updated: ${formatDateTime(session.updatedAt)}`,
+      parent ? `- Follows: ${parent.title}` : "- Follows: none",
+      session.archivedAt ? `- Archived: ${formatDateTime(session.archivedAt)}` : "- Archived: no",
+      `- Archetypes: ${session.selectedArchetypes.join(", ")}`,
+    ].join("\n"),
+    session.followUpNote ? `## Follow-up Update\n\n${session.followUpNote}` : "",
+    `## Context\n\n${session.sourceText}`,
+    `## Signed Records\n\n${records}`,
+    `## Action Log\n\n${actions}`,
+    `## Archetype Summaries\n\n${outputs || "No archetype results captured yet."}`,
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+};
+
+const formatChainMarkdown = (sessions: QuorumSession[], sessionId: string) =>
+  buildSessionChain(sessions, sessionId)
+    .map(({ session, depth }) => `${"#".repeat(Math.min(depth + 1, 3))} Chain item: ${session.title}\n\n${formatSessionMarkdown(session, sessions)}`)
+    .join("\n\n---\n\n");
+
+const sessionJsonExport = (session: QuorumSession, sessions: QuorumSession[]) => ({
+  schemaVersion: storageVersion,
+  exportedAt: new Date().toISOString(),
+  session,
+  parent: session.parentSessionId ? sessions.find((item) => item.id === session.parentSessionId) ?? null : null,
+  children: sessions.filter((item) => item.parentSessionId === session.id),
+});
+
+const chainJsonExport = (sessions: QuorumSession[], sessionId: string) => ({
+  schemaVersion: storageVersion,
+  exportedAt: new Date().toISOString(),
+  chain: buildSessionChain(sessions, sessionId).map(({ session, depth }) => ({ depth, session })),
+});
+
+const downloadTextFile = (filename: string, content: string, type: string) => {
+  const blob = new Blob([content], { type });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 0);
+};
 
 const toAgentResult = (text: string, id: ArchetypeId): AgentResult => {
   const clean = text.replace(/\s+/g, " ").trim();
@@ -1285,6 +1448,43 @@ function App() {
     setView("docket");
   };
 
+  const archiveSession = (id: string) => {
+    const now = new Date().toISOString();
+    setPersisted((previous) => ({
+      ...previous,
+      activeSessionId: previous.activeSessionId === id ? undefined : previous.activeSessionId,
+      sessions: previous.sessions.map((session) =>
+        session.id === id
+          ? {
+              ...session,
+              archivedAt: now,
+              updatedAt: now,
+            }
+          : session,
+      ),
+    }));
+    if (activeSession?.id === id) {
+      resetTransient();
+      setView("docket");
+    }
+  };
+
+  const restoreSession = (id: string) => {
+    const now = new Date().toISOString();
+    setPersisted((previous) => ({
+      ...previous,
+      sessions: previous.sessions.map((session) =>
+        session.id === id
+          ? {
+              ...session,
+              archivedAt: undefined,
+              updatedAt: now,
+            }
+          : session,
+      ),
+    }));
+  };
+
   return (
     <main className="app-shell">
       <header className="topbar">
@@ -1342,6 +1542,8 @@ function App() {
           onSetIntakeTitle={setIntakeTitle}
           onSetIntakeText={setIntakeText}
           onCreateSession={createIntakeSession}
+          onArchiveSession={archiveSession}
+          onRestoreSession={restoreSession}
           onOpenSession={(id) => {
             const session = persisted.sessions.find((item) => item.id === id);
             if (session) hydrateSessionState(session);
@@ -1412,6 +1614,8 @@ type DocketProps = {
   onSetIntakeTitle: (value: string) => void;
   onSetIntakeText: (value: string) => void;
   onCreateSession: () => void;
+  onArchiveSession: (id: string) => void;
+  onRestoreSession: (id: string) => void;
   onOpenSession: (id: string) => void;
 };
 
@@ -1424,17 +1628,71 @@ function DocketView({
   onSetIntakeTitle,
   onSetIntakeText,
   onCreateSession,
+  onArchiveSession,
+  onRestoreSession,
   onOpenSession,
 }: DocketProps) {
-  const committedMinutes = sessions
-    .flatMap((session) =>
-      session.minutes.map((entry) => ({
-        entry,
-        sessionId: session.id,
-        sessionTitle: session.title,
-      })),
-    )
-    .slice(0, 4);
+  const [selectedLedgerId, setSelectedLedgerId] = useState<string | undefined>();
+  const [showArchived, setShowArchived] = useState(false);
+  const activeSessions = useMemo(() => sessions.filter((session) => !session.archivedAt), [sessions]);
+  const ledgerRows = useMemo(() => buildLedgerRows(sessions, showArchived), [sessions, showArchived]);
+  const selectedLedgerSession =
+    sessions.find((session) => session.id === selectedLedgerId) ?? ledgerRows[0]?.session ?? activeSessions[0];
+  const selectedChain = selectedLedgerSession ? buildSessionChain(sessions, selectedLedgerSession.id, true) : [];
+  const latestRecords = useMemo(
+    () =>
+      activeSessions
+        .flatMap((session) =>
+          session.minutes.map((entry) => ({
+            entry,
+            sessionId: session.id,
+            sessionTitle: session.title,
+            updatedAt: session.updatedAt,
+          })),
+        )
+        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+        .slice(0, 3),
+    [activeSessions],
+  );
+
+  useEffect(() => {
+    if (!ledgerRows.length) {
+      if (selectedLedgerId) setSelectedLedgerId(undefined);
+      return;
+    }
+
+    if (!selectedLedgerId || !ledgerRows.some(({ session }) => session.id === selectedLedgerId)) {
+      setSelectedLedgerId(ledgerRows[0].session.id);
+    }
+  }, [ledgerRows, selectedLedgerId]);
+
+  const exportSessionMarkdown = (session: QuorumSession) => {
+    downloadTextFile(`${sanitizeFileName(session.title)}.md`, formatSessionMarkdown(session, sessions), "text/markdown;charset=utf-8");
+  };
+
+  const exportSessionJson = (session: QuorumSession) => {
+    downloadTextFile(
+      `${sanitizeFileName(session.title)}.json`,
+      JSON.stringify(sessionJsonExport(session, sessions), null, 2),
+      "application/json;charset=utf-8",
+    );
+  };
+
+  const exportChainMarkdown = (session: QuorumSession) => {
+    downloadTextFile(
+      `${sanitizeFileName(session.title)}-chain.md`,
+      formatChainMarkdown(sessions, session.id),
+      "text/markdown;charset=utf-8",
+    );
+  };
+
+  const exportChainJson = (session: QuorumSession) => {
+    downloadTextFile(
+      `${sanitizeFileName(session.title)}-chain.json`,
+      JSON.stringify(chainJsonExport(sessions, session.id), null, 2),
+      "application/json;charset=utf-8",
+    );
+  };
 
   return (
     <section className="docket-layout">
@@ -1539,55 +1797,220 @@ function DocketView({
           </div>
         </section>
 
-        <section className="sessions-panel">
+        <section className="sessions-panel ledger-panel">
           <div className="panel-heading">
-            <span className="section-label">Workspace</span>
-            <strong>Sessions and signed records</strong>
+            <span className="section-label">Session Ledger</span>
+            <strong>Chains, records, and exports</strong>
           </div>
 
-          <div className="session-list">
-            <span className="mini-label">Recent Sessions</span>
-            {sessions.length > 0 ? (
-              sessions.slice(0, 5).map((session) => {
-                const parentSession = session.parentSessionId
-                  ? sessions.find((item) => item.id === session.parentSessionId)
-                  : undefined;
+          <div className="ledger-stats" aria-label="Session ledger totals">
+            <span>
+              <strong>{activeSessions.length}</strong>
+              active
+            </span>
+            <span>
+              <strong>{sessions.filter((session) => session.archivedAt).length}</strong>
+              archived
+            </span>
+            <span>
+              <strong>{activeSessions.reduce((total, session) => total + session.minutes.length, 0)}</strong>
+              records
+            </span>
+          </div>
 
-                return (
-                  <button key={session.id} onClick={() => onOpenSession(session.id)} type="button">
-                    <strong>{session.title}</strong>
-                    <span>
-                      {session.mode === "clinical" ? "Clinical" : "Thinking"} - {session.selectedArchetypes.length} cards -{" "}
-                      {session.minutes.length} records
-                    </span>
-                    {parentSession && <em>Follow-up to {parentSession.title}</em>}
+          <div className="ledger-layout">
+            <div className="ledger-list-column">
+              <div className="session-list">
+                <span className="mini-label">Recent active</span>
+                {activeSessions.length > 0 ? (
+                  activeSessions.slice(0, 4).map((session) => {
+                    const parentSession = session.parentSessionId
+                      ? sessions.find((item) => item.id === session.parentSessionId)
+                      : undefined;
+
+                    return (
+                      <button key={session.id} onClick={() => onOpenSession(session.id)} type="button">
+                        <strong>{session.title}</strong>
+                        <span>
+                          {session.mode === "clinical" ? "Clinical" : "Thinking"} - {session.selectedArchetypes.length} cards -{" "}
+                          {session.minutes.length} records
+                        </span>
+                        {parentSession && <em>Follow-up to {parentSession.title}</em>}
+                      </button>
+                    );
+                  })
+                ) : (
+                  <div className="empty-minutes compact">
+                    <Archive size={22} />
+                    <span>No active Sessions yet.</span>
+                  </div>
+                )}
+              </div>
+
+              <div className="ledger-chain-list">
+                <div className="ledger-chain-heading">
+                  <span className="mini-label">Session chains</span>
+                  <button className="inline-action" onClick={() => setShowArchived((value) => !value)} type="button">
+                    {showArchived ? "Hide archived" : "Show archived"}
                   </button>
-                );
-              })
-            ) : (
-              <div className="empty-minutes compact">
-                <Archive size={22} />
-                <span>No Sessions yet.</span>
+                </div>
+                {ledgerRows.length > 0 ? (
+                  ledgerRows.map(({ session, depth }) => (
+                    <button
+                      className={`${selectedLedgerSession?.id === session.id ? "active" : ""} ${session.archivedAt ? "archived" : ""}`}
+                      key={session.id}
+                      onClick={() => setSelectedLedgerId(session.id)}
+                      style={{ "--ledger-depth": depth } as CSSProperties}
+                      type="button"
+                    >
+                      <span>{depth > 0 ? "Follow-up" : "Primary"}</span>
+                      <strong>{session.title}</strong>
+                      <small>
+                        {formatDateTime(session.updatedAt)} - {session.minutes.length} records
+                      </small>
+                    </button>
+                  ))
+                ) : (
+                  <div className="empty-minutes compact">
+                    <GitBranch size={22} />
+                    <span>No ledger chains yet.</span>
+                  </div>
+                )}
               </div>
-            )}
-          </div>
 
-          <div className="session-minutes">
-            <span className="mini-label">Signed Clerk Records</span>
-            {committedMinutes.length > 0 ? (
-              committedMinutes.map(({ entry, sessionId, sessionTitle }) => (
-                <pre key={`${sessionId}-${entry}`} className="minutes-entry">
-                  {sessionTitle}
-                  {"\n"}
-                  {entry}
-                </pre>
-              ))
-            ) : (
-              <div className="empty-minutes compact">
-                <ClipboardList size={22} />
-                <span>No Clerk records committed yet.</span>
+              <div className="session-minutes">
+                <span className="mini-label">Latest signed records</span>
+                {latestRecords.length > 0 ? (
+                  latestRecords.map(({ entry, sessionId, sessionTitle }) => (
+                    <pre key={`${sessionId}-${entry}`} className="minutes-entry compact-record">
+                      {sessionTitle}
+                      {"\n"}
+                      {entry}
+                    </pre>
+                  ))
+                ) : (
+                  <div className="empty-minutes compact">
+                    <ClipboardList size={22} />
+                    <span>No Clerk records committed yet.</span>
+                  </div>
+                )}
               </div>
-            )}
+            </div>
+
+            <div className="ledger-detail">
+              {selectedLedgerSession ? (
+                <>
+                  <header className="ledger-detail-header">
+                    <div>
+                      <div className="session-badges">
+                        <span className={`mode-badge ${selectedLedgerSession.mode}`}>
+                          {selectedLedgerSession.mode === "clinical" ? "Clinical" : "Thinking"}
+                        </span>
+                        <span className="mode-badge linked">
+                          {selectedLedgerSession.parentSessionId ? "Follow-up Session" : "Primary Session"}
+                        </span>
+                        {selectedLedgerSession.archivedAt && <span className="mode-badge archived">Archived</span>}
+                      </div>
+                      <h2>{selectedLedgerSession.title}</h2>
+                      <p>
+                        Created {formatDateTime(selectedLedgerSession.createdAt)} - Updated {formatDateTime(selectedLedgerSession.updatedAt)}
+                      </p>
+                    </div>
+                    <div className="ledger-detail-actions">
+                      <button className="primary-button" onClick={() => onOpenSession(selectedLedgerSession.id)} type="button">
+                        <FileText size={16} />
+                        Open
+                      </button>
+                      {selectedLedgerSession.archivedAt ? (
+                        <button className="secondary-button" onClick={() => onRestoreSession(selectedLedgerSession.id)} type="button">
+                          <RotateCcw size={16} />
+                          Restore
+                        </button>
+                      ) : (
+                        <button className="secondary-button" onClick={() => onArchiveSession(selectedLedgerSession.id)} type="button">
+                          <Archive size={16} />
+                          Archive
+                        </button>
+                      )}
+                    </div>
+                  </header>
+
+                  <div className="ledger-chain-strip">
+                    <span className="mini-label">Linked chain</span>
+                    <div>
+                      {selectedChain.map(({ session, depth }) => (
+                        <button
+                          className={selectedLedgerSession.id === session.id ? "active" : ""}
+                          key={session.id}
+                          onClick={() => setSelectedLedgerId(session.id)}
+                          style={{ "--ledger-depth": depth } as CSSProperties}
+                          type="button"
+                        >
+                          <GitBranch size={13} />
+                          {session.title}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="ledger-export-row">
+                    <button className="ghost-button" onClick={() => exportSessionMarkdown(selectedLedgerSession)} type="button">
+                      <Download size={15} />
+                      Session MD
+                    </button>
+                    <button className="ghost-button" onClick={() => exportSessionJson(selectedLedgerSession)} type="button">
+                      <Download size={15} />
+                      Session JSON
+                    </button>
+                    <button className="ghost-button" onClick={() => exportChainMarkdown(selectedLedgerSession)} type="button">
+                      <Download size={15} />
+                      Chain MD
+                    </button>
+                    <button className="ghost-button" onClick={() => exportChainJson(selectedLedgerSession)} type="button">
+                      <Download size={15} />
+                      Chain JSON
+                    </button>
+                  </div>
+
+                  <div className="ledger-detail-grid">
+                    <section>
+                      <span className="mini-label">Context</span>
+                      <p>{selectedLedgerSession.sourceText}</p>
+                    </section>
+                    <section>
+                      <span className="mini-label">Action log</span>
+                      {selectedLedgerSession.actionLog.length ? (
+                        <ul>
+                          {selectedLedgerSession.actionLog.slice(0, 10).map((entry) => (
+                            <li key={entry.id}>
+                              <strong>{entry.label}</strong>
+                              <span>{entry.detail}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <p>No action-log entries yet.</p>
+                      )}
+                    </section>
+                    <section className="ledger-records">
+                      <span className="mini-label">Signed records</span>
+                      {selectedLedgerSession.minutes.length ? (
+                        selectedLedgerSession.minutes.map((entry, index) => (
+                          <pre key={`${selectedLedgerSession.id}-${index}`}>{entry}</pre>
+                        ))
+                      ) : (
+                        <p>No signed Clerk records yet.</p>
+                      )}
+                    </section>
+                  </div>
+                </>
+              ) : (
+                <div className="empty-minutes">
+                  <GitBranch size={24} />
+                  <span>Create a Session to start the ledger.</span>
+                </div>
+              )}
+            </div>
           </div>
         </section>
       </div>
