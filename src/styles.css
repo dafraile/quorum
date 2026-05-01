@@ -481,6 +481,40 @@ button:disabled {
   white-space: pre-wrap;
 }
 
+.anonymizer-editor {
+  min-height: 170px;
+  width: 100%;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: #fffaf0;
+  color: #3f392f;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 11px;
+  line-height: 1.45;
+  resize: vertical;
+}
+
+.anonymizer-risk {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  padding: 8px 9px;
+  border: 1px solid rgba(143, 47, 47, 0.28);
+  border-radius: 7px;
+  background: rgba(143, 47, 47, 0.08);
+  color: var(--red-dark);
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.35;
+}
+
+.anonymizer-risk.clear {
+  border-color: rgba(47, 127, 123, 0.34);
+  background: rgba(47, 127, 123, 0.09);
+  color: #1f6763;
+}
+
 .docket-card,
 .motion-panel,
 .session-composer,
@@ -700,6 +734,55 @@ button:disabled {
   color: #2d2922;
   font-size: 18px;
   line-height: 1;
+}
+
+.persistence-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 14px;
+  padding: 12px;
+  border: 1px solid rgba(47, 127, 123, 0.22);
+  border-radius: 8px;
+  background: rgba(255, 250, 240, 0.72);
+}
+
+.persistence-card.error {
+  border-color: rgba(143, 47, 47, 0.28);
+  background: rgba(143, 47, 47, 0.07);
+}
+
+.persistence-card.imported {
+  border-color: rgba(168, 135, 56, 0.34);
+  background: rgba(168, 135, 56, 0.08);
+}
+
+.persistence-card strong {
+  display: block;
+  margin-top: 3px;
+  color: #312c25;
+  font-size: 13px;
+}
+
+.persistence-card p {
+  margin: 3px 0 0;
+  color: #625a4f;
+  font-size: 12px;
+  font-weight: 750;
+  line-height: 1.35;
+}
+
+.persistence-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.persistence-actions .ghost-button {
+  min-height: 34px;
+  font-size: 12px;
 }
 
 .ledger-layout {
@@ -2109,12 +2192,14 @@ button:disabled {
   .ledger-layout,
   .ledger-detail-header,
   .ledger-detail-grid,
+  .persistence-card,
   .lounge-controls {
     grid-template-columns: 1fr;
   }
 
   .ledger-detail-actions,
-  .ledger-export-row {
+  .ledger-export-row,
+  .persistence-actions {
     justify-content: flex-start;
   }
 

@@ -21,11 +21,12 @@ import {
   ShieldAlert,
   Sparkles,
   Stethoscope,
+  Upload,
   UserRoundCheck,
   WandSparkles,
   X,
 } from "lucide-react";
-import { type CSSProperties, useEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, type RefObject, useEffect, useMemo, useRef, useState } from "react";
 import {
   type AgentSettings,
   type Archetype,
@@ -42,6 +43,11 @@ type CallState = "idle" | "calling" | "complete";
 type SourceLink = { title: string; url: string };
 type RuntimeInfo = { live: boolean; model: string };
 type SessionMode = "clinical" | "thinking";
+type PersistenceStatus = {
+  state: "loading" | "synced" | "local" | "imported" | "error";
+  label: string;
+  detail: string;
+};
 
 type AgentResult = {
   answer: string;
@@ -64,7 +70,10 @@ type AnonymizationState = {
   anonymizedText: string;
   redactionCount: number;
   findings: string[];
+  riskFlags: string[];
+  engineVersion: string;
   createdAt: string;
+  editedAt?: string;
   approvedForLive: boolean;
 };
 
@@ -125,6 +134,9 @@ type PersistedState = {
 const storageKey = "quorum-state-v1";
 const legacyStorageKey = "quorum-demo-state-v033";
 const storageVersion = 2;
+const persistenceDbName = "quorum-workbench";
+const persistenceStoreName = "state";
+const persistenceStateKey = "persisted-state";
 
 const defaultPlannerDrafts: Record<SessionMode, string[]> = {
   clinical: [
@@ -190,44 +202,135 @@ const normalizePersistedAgentResult = (value: any): AgentResult => ({
     : [],
 });
 
+const normalizeAnonymizationState = (value: any): AnonymizationState | undefined => {
+  if (!value || typeof value !== "object") return undefined;
+
+  return {
+    anonymizedText: String(value.anonymizedText ?? ""),
+    redactionCount: Number(value.redactionCount ?? 0),
+    findings: Array.isArray(value.findings) ? value.findings.map(String) : [],
+    riskFlags: Array.isArray(value.riskFlags) ? value.riskFlags.map(String) : [],
+    engineVersion: String(value.engineVersion ?? "local-pattern-v1"),
+    createdAt: String(value.createdAt ?? new Date().toISOString()),
+    editedAt: value.editedAt ? String(value.editedAt) : undefined,
+    approvedForLive: Boolean(value.approvedForLive),
+  };
+};
+
+const normalizePersistedState = (parsed: Partial<PersistedState>): PersistedState => {
+  const sessions = (parsed.sessions ?? []).map((session) => ({
+    ...session,
+    settings: {
+      ...defaultAgentSettings,
+      ...(session.settings ?? {}),
+    },
+    selectedArchetypes: session.selectedArchetypes ?? defaultSession,
+    results: Object.fromEntries(
+      Object.entries(session.results ?? {}).map(([id, result]) => [id, normalizePersistedAgentResult(result)]),
+    ),
+    outputs: session.outputs ?? {},
+    reviews: session.reviews ?? {},
+    lounge: session.lounge ?? [],
+    minutes: session.minutes ?? [],
+    actionLog: session.actionLog ?? [],
+    anonymization: normalizeAnonymizationState(session.anonymization),
+    archivedAt: session.archivedAt,
+  }));
+
+  return {
+    schemaVersion: storageVersion,
+    selectedArchetypes: parsed.selectedArchetypes ?? initialPersisted.selectedArchetypes,
+    settings: {
+      ...defaultAgentSettings,
+      ...(parsed.settings ?? {}),
+    },
+    sessions,
+    activeSessionId: sessions.some((session) => session.id === parsed.activeSessionId) ? parsed.activeSessionId : undefined,
+    customArchetypes: parsed.customArchetypes ?? [],
+  };
+};
+
 const loadPersisted = (): PersistedState => {
   const raw = window.localStorage.getItem(storageKey) ?? window.localStorage.getItem(legacyStorageKey);
   if (!raw) return initialPersisted;
 
   try {
-    const parsed = JSON.parse(raw) as Partial<PersistedState>;
-    const sessions = (parsed.sessions ?? []).map((session) => ({
-      ...session,
-      settings: {
-        ...defaultAgentSettings,
-        ...(session.settings ?? {}),
-      },
-      selectedArchetypes: session.selectedArchetypes ?? defaultSession,
-      results: Object.fromEntries(
-        Object.entries(session.results ?? {}).map(([id, result]) => [id, normalizePersistedAgentResult(result)]),
-      ),
-      outputs: session.outputs ?? {},
-      reviews: session.reviews ?? {},
-      lounge: session.lounge ?? [],
-      minutes: session.minutes ?? [],
-      actionLog: session.actionLog ?? [],
-      archivedAt: session.archivedAt,
-    }));
-
-    return {
-      schemaVersion: storageVersion,
-      selectedArchetypes: parsed.selectedArchetypes ?? initialPersisted.selectedArchetypes,
-      settings: {
-        ...defaultAgentSettings,
-        ...(parsed.settings ?? {}),
-      },
-      sessions,
-      activeSessionId: sessions.some((session) => session.id === parsed.activeSessionId) ? parsed.activeSessionId : undefined,
-      customArchetypes: parsed.customArchetypes ?? [],
-    };
+    return normalizePersistedState(JSON.parse(raw) as Partial<PersistedState>);
   } catch {
     return initialPersisted;
   }
+};
+
+const indexedDbAvailable = () => typeof window !== "undefined" && "indexedDB" in window;
+
+const openPersistenceDb = () =>
+  new Promise<IDBDatabase>((resolve, reject) => {
+    if (!indexedDbAvailable()) {
+      reject(new Error("IndexedDB is not available"));
+      return;
+    }
+
+    const request = window.indexedDB.open(persistenceDbName, 1);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(persistenceStoreName)) {
+        db.createObjectStore(persistenceStoreName);
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error ?? new Error("IndexedDB open failed"));
+  });
+
+const readPersistedFromIndexedDb = async () => {
+  const db = await openPersistenceDb();
+
+  return new Promise<PersistedState | null>((resolve, reject) => {
+    const transaction = db.transaction(persistenceStoreName, "readonly");
+    const request = transaction.objectStore(persistenceStoreName).get(persistenceStateKey);
+    request.onsuccess = () => {
+      db.close();
+      resolve(request.result ? normalizePersistedState(request.result as Partial<PersistedState>) : null);
+    };
+    request.onerror = () => {
+      db.close();
+      reject(request.error ?? new Error("IndexedDB read failed"));
+    };
+  });
+};
+
+const writePersistedToIndexedDb = async (state: PersistedState) => {
+  const db = await openPersistenceDb();
+
+  return new Promise<void>((resolve, reject) => {
+    const transaction = db.transaction(persistenceStoreName, "readwrite");
+    const request = transaction.objectStore(persistenceStoreName).put(state, persistenceStateKey);
+    request.onsuccess = () => {
+      db.close();
+      resolve();
+    };
+    request.onerror = () => {
+      db.close();
+      reject(request.error ?? new Error("IndexedDB write failed"));
+    };
+  });
+};
+
+const clearPersistedFromIndexedDb = async () => {
+  if (!indexedDbAvailable()) return;
+  const db = await openPersistenceDb();
+
+  return new Promise<void>((resolve, reject) => {
+    const transaction = db.transaction(persistenceStoreName, "readwrite");
+    const request = transaction.objectStore(persistenceStoreName).delete(persistenceStateKey);
+    request.onsuccess = () => {
+      db.close();
+      resolve();
+    };
+    request.onerror = () => {
+      db.close();
+      reject(request.error ?? new Error("IndexedDB clear failed"));
+    };
+  });
 };
 
 const iconForArchetype = (id: ArchetypeId) => {
@@ -529,63 +632,99 @@ const fallbackClerkDraft = (
   };
 };
 
-const anonymizationPatterns: Array<{ label: string; pattern: RegExp; replacement: string }> = [
+const anonymizationEngineVersion = "local-pattern-v2";
+
+const anonymizationPatterns: Array<{ label: string; pattern: RegExp; token: string }> = [
   {
     label: "Email address",
     pattern: /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi,
-    replacement: "[EMAIL]",
+    token: "EMAIL",
   },
   {
     label: "Phone or long numeric identifier",
     pattern: /\b(?:\+?\d[\d\s().-]{7,}\d)\b/g,
-    replacement: "[PHONE_OR_ID]",
+    token: "PHONE_OR_ID",
   },
   {
     label: "Health identifier",
     pattern: /\b(?:MRN|UR|URN|NHI|Medicare|Patient ID)\s*[:#]?\s*[A-Z0-9-]{4,}\b/gi,
-    replacement: "[HEALTH_ID]",
+    token: "HEALTH_ID",
   },
   {
     label: "Date of birth",
     pattern: /\b(?:DOB|Date of birth)\s*[:#]?\s*\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b/gi,
-    replacement: "[DOB]",
+    token: "DOB",
   },
   {
     label: "Calendar date",
     pattern: /\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b/g,
-    replacement: "[DATE]",
+    token: "DATE",
   },
   {
     label: "Street address",
     pattern:
       /\b\d{1,5}\s+[A-Z][A-Za-z]*(?:\s+[A-Z][A-Za-z]*){0,4}\s+(?:St|Street|Rd|Road|Ave|Avenue|Dr|Drive|Lane|Ln|Court|Ct|Place|Pl|Way)\b/g,
-    replacement: "[ADDRESS]",
+    token: "ADDRESS",
   },
   {
     label: "Explicit patient name",
     pattern: /\b(?:Patient name|Name)\s*:\s*[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+/g,
-    replacement: "Patient name: [NAME]",
+    token: "NAME",
+  },
+  {
+    label: "Clinician name",
+    pattern: /\b(?:Dr|Doctor|Prof|Professor|Nurse)\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?\b/g,
+    token: "CLINICIAN",
+  },
+  {
+    label: "Facility or hospital name",
+    pattern: /\b[A-Z][A-Za-z]*(?:\s+[A-Z][A-Za-z]*){0,4}\s+(?:Hospital|Clinic|Medical Centre|Practice|Health Service)\b/g,
+    token: "FACILITY",
+  },
+  {
+    label: "Postcode-like identifier",
+    pattern: /\b(?:Postcode|ZIP|NSW|VIC|QLD|SA|WA|TAS|ACT|NT)\s*:?\s?\d{4}\b/gi,
+    token: "POSTCODE",
   },
 ];
+
+const residualRiskPatterns: Array<{ label: string; pattern: RegExp }> = [
+  { label: "Possible email remains", pattern: /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i },
+  { label: "Possible phone or identifier remains", pattern: /\b(?:\+?\d[\d\s().-]{7,}\d)\b/ },
+  { label: "Possible date remains", pattern: /\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b/ },
+  { label: "Possible address remains", pattern: /\b\d{1,5}\s+[A-Z][A-Za-z]*(?:\s+[A-Z][A-Za-z]*){0,4}\s+(?:St|Street|Rd|Road|Ave|Avenue|Dr|Drive|Lane|Ln|Court|Ct|Place|Pl|Way)\b/ },
+  { label: "Possible named clinician remains", pattern: /\b(?:Dr|Doctor|Prof|Professor|Nurse)\s+[A-Z][a-z]+/ },
+];
+
+const residualRiskFlagsFor = (text: string) =>
+  residualRiskPatterns.filter(({ pattern }) => pattern.test(text)).map(({ label }) => label);
 
 const anonymizeClinicalText = (text: string): AnonymizationState => {
   let anonymizedText = text;
   const findings: string[] = [];
   let redactionCount = 0;
 
-  anonymizationPatterns.forEach(({ label, pattern, replacement }) => {
+  anonymizationPatterns.forEach(({ label, pattern, token }) => {
     const matches = anonymizedText.match(pattern);
     if (!matches?.length) return;
 
     redactionCount += matches.length;
     findings.push(`${label}: ${matches.length}`);
-    anonymizedText = anonymizedText.replace(pattern, replacement);
+    let replacementCount = 0;
+    anonymizedText = anonymizedText.replace(pattern, () => {
+      replacementCount += 1;
+      return `[${token}_${replacementCount}]`;
+    });
   });
+
+  const riskFlags = residualRiskFlagsFor(anonymizedText);
 
   return {
     anonymizedText,
     redactionCount,
     findings: findings.length ? findings : ["No obvious direct identifiers detected by local pattern scan."],
+    riskFlags,
+    engineVersion: anonymizationEngineVersion,
     createdAt: new Date().toISOString(),
     approvedForLive: false,
   };
@@ -626,7 +765,14 @@ function App() {
   const [loungeTarget, setLoungeTarget] = useState<ArchetypeId | "floor">("floor");
   const [loungePrompt, setLoungePrompt] = useState("");
   const [loungeRunning, setLoungeRunning] = useState(false);
+  const [persistenceReady, setPersistenceReady] = useState(false);
+  const [persistenceStatus, setPersistenceStatus] = useState<PersistenceStatus>({
+    state: "loading",
+    label: "Loading store",
+    detail: "Checking local browser database.",
+  });
   const timers = useRef<number[]>([]);
+  const backupInputRef = useRef<HTMLInputElement>(null);
 
   const allArchetypes = useMemo(() => [...archetypes, ...persisted.customArchetypes], [persisted.customArchetypes]);
   const activeSession = persisted.sessions.find((session) => session.id === persisted.activeSessionId);
@@ -651,8 +797,67 @@ function App() {
   );
 
   useEffect(() => {
+    let cancelled = false;
+
+    readPersistedFromIndexedDb()
+      .then((indexedState) => {
+        if (cancelled) return;
+        if (indexedState) setPersisted(indexedState);
+        setPersistenceStatus({
+          state: indexedState ? "synced" : "local",
+          label: indexedState ? "IndexedDB restored" : "Local store ready",
+          detail: indexedState
+            ? "Sessions were restored from the browser database."
+            : "No IndexedDB record found; localStorage is available as a fallback.",
+        });
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setPersistenceStatus({
+          state: "local",
+          label: "localStorage fallback",
+          detail: "IndexedDB is unavailable in this browser context.",
+        });
+      })
+      .finally(() => {
+        if (!cancelled) setPersistenceReady(true);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!persistenceReady) return;
+
     window.localStorage.setItem(storageKey, JSON.stringify(persisted));
-  }, [persisted]);
+
+    if (!indexedDbAvailable()) {
+      setPersistenceStatus({
+        state: "local",
+        label: "localStorage fallback",
+        detail: "Browser database unavailable; Sessions are mirrored to localStorage only.",
+      });
+      return;
+    }
+
+    writePersistedToIndexedDb(persisted)
+      .then(() =>
+        setPersistenceStatus({
+          state: "synced",
+          label: "Saved locally",
+          detail: "Sessions are mirrored to IndexedDB and localStorage.",
+        }),
+      )
+      .catch(() =>
+        setPersistenceStatus({
+          state: "error",
+          label: "IndexedDB save failed",
+          detail: "Sessions are still mirrored to localStorage.",
+        }),
+      );
+  }, [persisted, persistenceReady]);
 
   useEffect(() => {
     fetch("/api/runtime")
@@ -688,6 +893,7 @@ function App() {
   const resetDemo = () => {
     window.localStorage.removeItem(storageKey);
     window.localStorage.removeItem(legacyStorageKey);
+    void clearPersistedFromIndexedDb();
     timers.current.forEach(window.clearTimeout);
     timers.current = [];
     setPersisted(initialPersisted);
@@ -704,6 +910,46 @@ function App() {
     setLoungeRunning(false);
     setFollowUpText("");
     setView("docket");
+  };
+
+  const exportFullBackup = () => {
+    downloadTextFile(
+      `quorum-backup-${new Date().toISOString().slice(0, 10)}.json`,
+      JSON.stringify(
+        {
+          schemaVersion: storageVersion,
+          exportedAt: new Date().toISOString(),
+          persisted,
+        },
+        null,
+        2,
+      ),
+      "application/json;charset=utf-8",
+    );
+  };
+
+  const importBackupFile = async (file: File) => {
+    try {
+      const raw = await file.text();
+      const parsed = JSON.parse(raw);
+      const state = normalizePersistedState((parsed.persisted ?? parsed) as Partial<PersistedState>);
+      setPersisted(state);
+      resetTransient();
+      setView("docket");
+      setPersistenceStatus({
+        state: "imported",
+        label: "Backup imported",
+        detail: `${state.sessions.length} Sessions loaded into the local workspace.`,
+      });
+    } catch {
+      setPersistenceStatus({
+        state: "error",
+        label: "Import failed",
+        detail: "The selected file was not a valid Quorum backup.",
+      });
+    } finally {
+      if (backupInputRef.current) backupInputRef.current.value = "";
+    }
   };
 
   const updateActiveSession = (updater: (session: QuorumSession) => QuorumSession) => {
@@ -883,7 +1129,9 @@ function App() {
           id: createId("act"),
           at: new Date().toISOString(),
           label: "Local anonymizer run",
-          detail: `${report.redactionCount} potential identifiers were replaced before live model use can be enabled.`,
+          detail: `${report.redactionCount} potential identifiers were replaced. ${
+            report.riskFlags.length ? `${report.riskFlags.length} residual risk flags need review.` : "No residual direct identifier flags found."
+          }`,
         },
         ...session.actionLog,
       ].slice(0, 30),
@@ -912,6 +1160,24 @@ function App() {
         },
         ...session.actionLog,
       ].slice(0, 30),
+    }));
+  };
+
+  const updateAnonymizedText = (value: string) => {
+    if (!activeSession?.anonymization) return;
+    const now = new Date().toISOString();
+
+    updateActiveSession((session) => ({
+      ...session,
+      anonymization: session.anonymization
+        ? {
+            ...session.anonymization,
+            anonymizedText: value,
+            approvedForLive: false,
+            editedAt: now,
+            riskFlags: residualRiskFlagsFor(value),
+          }
+        : session.anonymization,
     }));
   };
 
@@ -1538,10 +1804,14 @@ function App() {
           intakeMode={intakeMode}
           intakeTitle={intakeTitle}
           intakeText={intakeText}
+          backupInputRef={backupInputRef}
+          persistenceStatus={persistenceStatus}
           onSetIntakeMode={setIntakeMode}
           onSetIntakeTitle={setIntakeTitle}
           onSetIntakeText={setIntakeText}
           onCreateSession={createIntakeSession}
+          onExportBackup={exportFullBackup}
+          onImportBackupFile={importBackupFile}
           onArchiveSession={archiveSession}
           onRestoreSession={restoreSession}
           onOpenSession={(id) => {
@@ -1576,6 +1846,7 @@ function App() {
           onCreateCustomArchetype={createCustomArchetype}
           onRunAnonymizer={runLocalAnonymizer}
           onSetClinicalLiveApproval={setClinicalLiveApproval}
+          onUpdateAnonymizedText={updateAnonymizedText}
           onCallSession={callSession}
           onReview={setReview}
           onReroll={rerollAgent}
@@ -1610,10 +1881,14 @@ type DocketProps = {
   intakeMode: SessionMode;
   intakeTitle: string;
   intakeText: string;
+  backupInputRef: RefObject<HTMLInputElement | null>;
+  persistenceStatus: PersistenceStatus;
   onSetIntakeMode: (mode: SessionMode) => void;
   onSetIntakeTitle: (value: string) => void;
   onSetIntakeText: (value: string) => void;
   onCreateSession: () => void;
+  onExportBackup: () => void;
+  onImportBackupFile: (file: File) => void;
   onArchiveSession: (id: string) => void;
   onRestoreSession: (id: string) => void;
   onOpenSession: (id: string) => void;
@@ -1624,10 +1899,14 @@ function DocketView({
   intakeMode,
   intakeTitle,
   intakeText,
+  backupInputRef,
+  persistenceStatus,
   onSetIntakeMode,
   onSetIntakeTitle,
   onSetIntakeText,
   onCreateSession,
+  onExportBackup,
+  onImportBackupFile,
   onArchiveSession,
   onRestoreSession,
   onOpenSession,
@@ -1816,6 +2095,35 @@ function DocketView({
               <strong>{activeSessions.reduce((total, session) => total + session.minutes.length, 0)}</strong>
               records
             </span>
+          </div>
+
+          <div className={`persistence-card ${persistenceStatus.state}`}>
+            <div>
+              <span className="mini-label">Local persistence</span>
+              <strong>{persistenceStatus.label}</strong>
+              <p>{persistenceStatus.detail}</p>
+            </div>
+            <div className="persistence-actions">
+              <button className="ghost-button" onClick={onExportBackup} type="button">
+                <Download size={15} />
+                Full backup
+              </button>
+              <button className="ghost-button" onClick={() => backupInputRef.current?.click()} type="button">
+                <Upload size={15} />
+                Import backup
+              </button>
+              <input
+                accept="application/json,.json"
+                aria-label="Import Quorum backup"
+                hidden
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  if (file) void onImportBackupFile(file);
+                }}
+                ref={backupInputRef}
+                type="file"
+              />
+            </div>
           </div>
 
           <div className="ledger-layout">
@@ -2042,6 +2350,7 @@ type FloorProps = {
   onCreateCustomArchetype: () => void;
   onRunAnonymizer: () => void;
   onSetClinicalLiveApproval: (approvedForLive: boolean) => void;
+  onUpdateAnonymizedText: (value: string) => void;
   onCallSession: () => void;
   onReview: (id: ArchetypeId, status: ReviewStatus) => void;
   onReroll: (id: ArchetypeId) => void;
@@ -2090,6 +2399,7 @@ function FloorView({
   onCreateCustomArchetype,
   onRunAnonymizer,
   onSetClinicalLiveApproval,
+  onUpdateAnonymizedText,
   onCallSession,
   onReview,
   onReroll,
@@ -2170,6 +2480,7 @@ function FloorView({
               onApprove={() => onSetClinicalLiveApproval(true)}
               onPause={() => onSetClinicalLiveApproval(false)}
               onRun={onRunAnonymizer}
+              onUpdateText={onUpdateAnonymizedText}
             />
           )}
           <div className="follow-up-card">
@@ -2662,11 +2973,13 @@ function AnonymizationPanel({
   onApprove,
   onPause,
   onRun,
+  onUpdateText,
 }: {
   anonymization?: AnonymizationState;
   onApprove: () => void;
   onPause: () => void;
   onRun: () => void;
+  onUpdateText: (value: string) => void;
 }) {
   if (!anonymization) {
     return (
@@ -2687,21 +3000,39 @@ function AnonymizationPanel({
     <div className="anonymizer-card">
       <div className={`anonymizer-status ${anonymization.approvedForLive ? "approved" : ""}`}>
         <strong>{anonymization.approvedForLive ? "Anonymized live calls enabled" : "Anonymized text ready for review"}</strong>
-        <span>{anonymization.redactionCount} replacements</span>
+        <span>
+          {anonymization.redactionCount} replacements - {anonymization.engineVersion}
+        </span>
       </div>
       <ul className="anonymizer-findings">
         {anonymization.findings.map((finding) => (
           <li key={finding}>{finding}</li>
         ))}
       </ul>
-      <pre className="anonymizer-preview">{anonymization.anonymizedText}</pre>
+      {anonymization.riskFlags.length > 0 ? (
+        <div className="anonymizer-risk">
+          <ShieldAlert size={14} />
+          <span>{anonymization.riskFlags.join("; ")}</span>
+        </div>
+      ) : (
+        <div className="anonymizer-risk clear">
+          <Check size={14} />
+          <span>No obvious direct identifiers remain after the local scan.</span>
+        </div>
+      )}
+      <textarea
+        aria-label="Editable anonymized clinical text"
+        className="anonymizer-editor"
+        onChange={(event) => onUpdateText(event.target.value)}
+        value={anonymization.anonymizedText}
+      />
       {anonymization.approvedForLive ? (
         <button className="secondary-button" onClick={onPause} type="button">
           Pause live clinical calls
         </button>
       ) : (
         <button className="primary-button" onClick={onApprove} type="button">
-          Use anonymized text for live calls
+          Approve reviewed text for live calls
         </button>
       )}
     </div>
