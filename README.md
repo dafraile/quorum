@@ -6,6 +6,12 @@ Most AI assistants are a single voice. Quorum takes the opposite stance: a Sessi
 
 The app supports both clinical-facing review and general thinking sessions. Clinical input is kept local until the local anonymizer has approved the text for live model calls.
 
+## Demo Video
+
+[![Quorum demo video](https://img.youtube.com/vi/l1OfnIDQYUI/hqdefault.jpg)](https://www.youtube.com/watch?v=l1OfnIDQYUI)
+
+[Watch the Quorum demo video](https://www.youtube.com/watch?v=l1OfnIDQYUI).
+
 ## Current App
 
 The current product surface includes:
