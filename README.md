@@ -81,4 +81,8 @@ The runtime is intentionally shaped around a future OpenAI Responses API or Agen
 
 The current clinical privacy path is a local browser free-text preflight. It redacts common identifiers, flags residual risk, and blocks live clinical calls until reviewed text is approved. The Microsoft [Tools for Health Data Anonymization](https://github.com/microsoft/Tools-for-Health-Data-Anonymization) project remains the intended backend adapter target for proper FHIR/DICOM anonymization.
 
+## License
+
+Quorum is licensed under the [Apache License 2.0](LICENSE).
+
 Do not pitch this as diagnosis. The architecture surfaces deliberation; the Chair decides.
