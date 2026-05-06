@@ -1055,6 +1055,82 @@ button:disabled {
   overflow: auto;
 }
 
+.turn-timeline {
+  display: grid;
+  gap: 8px;
+  padding: 11px;
+  border: 1px solid rgba(168, 135, 56, 0.3);
+  border-radius: 7px;
+  background: rgba(255, 250, 240, 0.76);
+}
+
+.turn-timeline.empty p {
+  margin: 0;
+  color: #625a4f;
+  font-size: 12px;
+  font-weight: 750;
+  line-height: 1.4;
+}
+
+.turn-timeline-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.turn-timeline-heading strong {
+  color: #312c25;
+  font-size: 12px;
+}
+
+.turn-list {
+  display: grid;
+  gap: 7px;
+  max-height: 240px;
+  overflow: auto;
+}
+
+.turn-list button {
+  display: grid;
+  gap: 3px;
+  width: 100%;
+  padding: 9px;
+  border: 1px solid var(--border);
+  border-left: 4px solid rgba(168, 135, 56, 0.52);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.56);
+  text-align: left;
+}
+
+.turn-list button.active {
+  border-color: rgba(47, 127, 123, 0.42);
+  border-left-color: var(--teal);
+  background: rgba(47, 127, 123, 0.08);
+}
+
+.turn-list button span {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.turn-list strong {
+  color: #312c25;
+  font-size: 12px;
+}
+
+.turn-list em,
+.turn-list small {
+  color: #625a4f;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 850;
+  line-height: 1.35;
+  text-transform: uppercase;
+}
+
 .follow-up-card {
   display: grid;
   gap: 9px;

@@ -112,6 +112,29 @@ type LoungeMessage = {
   keyPoints: string[];
 };
 
+type SessionTurnStatus = "called" | "reviewing" | "signed";
+
+type SessionTurn = {
+  id: string;
+  index: number;
+  title: string;
+  status: SessionTurnStatus;
+  motion: string;
+  contextSnapshot: string;
+  privacyPreflight: PrivacyPreflight;
+  selectedArchetypes: ArchetypeId[];
+  settings: Record<ArchetypeId, AgentSettings>;
+  results: Partial<Record<ArchetypeId, AgentResult>>;
+  outputs: Partial<Record<ArchetypeId, string>>;
+  reviews: Partial<Record<ArchetypeId, ReviewStatus>>;
+  lounge: LoungeMessage[];
+  clerkDraft?: ClerkDraft;
+  signedRecord?: string;
+  actionLog: ActionLogEntry[];
+  createdAt: string;
+  updatedAt: string;
+};
+
 type QuorumSession = {
   id: string;
   title: string;
@@ -125,6 +148,8 @@ type QuorumSession = {
   outputs: Partial<Record<ArchetypeId, string>>;
   reviews: Partial<Record<ArchetypeId, ReviewStatus>>;
   lounge: LoungeMessage[];
+  turns: SessionTurn[];
+  activeTurnId?: string;
   minutes: string[];
   actionLog: ActionLogEntry[];
   anonymization?: AnonymizationState;
@@ -144,7 +169,7 @@ type PersistedState = {
 
 const storageKey = "quorum-state-v1";
 const legacyStorageKey = "quorum-demo-state-v033";
-const storageVersion = 2;
+const storageVersion = 3;
 const persistenceDbName = "quorum-workbench";
 const persistenceStoreName = "state";
 const persistenceStateKey = "persisted-state";
@@ -213,6 +238,72 @@ const normalizePersistedAgentResult = (value: any): AgentResult => ({
     : [],
 });
 
+const normalizeActionLogEntries = (value: any): ActionLogEntry[] =>
+  Array.isArray(value)
+    ? value.map((entry: any) => ({
+        id: String(entry?.id ?? createId("act")),
+        at: String(entry?.at ?? new Date().toISOString()),
+        label: String(entry?.label ?? "Action"),
+        detail: String(entry?.detail ?? ""),
+      }))
+    : [];
+
+const normalizeReviews = (value: any): Partial<Record<ArchetypeId, ReviewStatus>> => {
+  const allowed = new Set<ReviewStatus>(["pending", "accepted", "rejected", "revision"]);
+  return Object.fromEntries(
+    Object.entries(value ?? {}).filter(([, status]) => allowed.has(status as ReviewStatus)),
+  ) as Partial<Record<ArchetypeId, ReviewStatus>>;
+};
+
+const normalizeOutputs = (value: any): Partial<Record<ArchetypeId, string>> =>
+  Object.fromEntries(Object.entries(value ?? {}).map(([id, output]) => [id, String(output ?? "")]));
+
+const normalizeAgentResults = (value: any): Partial<Record<ArchetypeId, AgentResult>> =>
+  Object.fromEntries(Object.entries(value ?? {}).map(([id, result]) => [id, normalizePersistedAgentResult(result)]));
+
+const normalizeLoungeMessages = (value: any): LoungeMessage[] =>
+  Array.isArray(value)
+    ? value.map((message: any) => ({
+        id: String(message?.id ?? createId("lounge")),
+        at: String(message?.at ?? new Date().toISOString()),
+        speakerId: String(message?.speakerId ?? "intern"),
+        targetId: message?.targetId ? String(message.targetId) : undefined,
+        text: String(message?.text ?? ""),
+        keyPoints: Array.isArray(message?.keyPoints) ? message.keyPoints.map(String) : [],
+      }))
+    : [];
+
+const normalizeClerkDraft = (value: any): ClerkDraft | undefined => {
+  if (!value || typeof value !== "object") return undefined;
+
+  return {
+    minutes: String(value.minutes ?? ""),
+    takeaways: Array.isArray(value.takeaways) ? value.takeaways.map(String) : [],
+    actions: Array.isArray(value.actions)
+      ? value.actions.map((item: any) => ({
+          label: String(item?.label ?? "Action"),
+          detail: String(item?.detail ?? ""),
+          owner: String(item?.owner ?? "Chair"),
+          priority: String(item?.priority ?? "Medium"),
+        }))
+      : [],
+    unresolvedQuestions: Array.isArray(value.unresolvedQuestions) ? value.unresolvedQuestions.map(String) : [],
+    reviewSummary: Array.isArray(value.reviewSummary) ? value.reviewSummary.map(String) : [],
+  };
+};
+
+const normalizePrivacyPreflight = (value: any): PrivacyPreflight => {
+  const allowed = new Set<PrivacyPreflight["state"]>(["clear", "blocked", "review"]);
+  const state = allowed.has(value?.state) ? value.state : "review";
+
+  return {
+    state,
+    label: String(value?.label ?? "Legacy turn"),
+    detail: String(value?.detail ?? "This turn was restored from an earlier Quorum schema."),
+    payload: String(value?.payload ?? "Payload audit unavailable for legacy turn."),
+  };
+};
+
 const normalizeAnonymizationState = (value: any): AnonymizationState | undefined => {
   if (!value || typeof value !== "object") return undefined;
 
@@ -232,25 +323,87 @@ const normalizeAnonymizationState = (value: any): AnonymizationState | undefined
   };
 };
 
-const normalizePersistedState = (parsed: Partial<PersistedState>): PersistedState => {
-  const sessions = (parsed.sessions ?? []).map((session) => ({
-    ...session,
+const normalizeSessionTurn = (value: any, fallbackIndex: number, sessionFallback: Partial<QuorumSession>): SessionTurn => {
+  const index = Number(value?.index ?? fallbackIndex);
+  const rawStatus = value?.status;
+  const status: SessionTurnStatus = rawStatus === "signed" || rawStatus === "reviewing" || rawStatus === "called" ? rawStatus : "reviewing";
+
+  return {
+    id: String(value?.id ?? createId("turn")),
+    index,
+    title: String(value?.title ?? `Turn ${index}`),
+    status,
+    motion: String(value?.motion ?? "Restored legacy Session turn."),
+    contextSnapshot: String(value?.contextSnapshot ?? sessionFallback.sourceText ?? ""),
+    privacyPreflight: normalizePrivacyPreflight(value?.privacyPreflight),
+    selectedArchetypes: Array.isArray(value?.selectedArchetypes)
+      ? value.selectedArchetypes.map(String)
+      : sessionFallback.selectedArchetypes ?? defaultSession,
     settings: {
       ...defaultAgentSettings,
-      ...(session.settings ?? {}),
+      ...(sessionFallback.settings ?? {}),
+      ...(value?.settings ?? {}),
     },
-    selectedArchetypes: session.selectedArchetypes ?? defaultSession,
-    results: Object.fromEntries(
-      Object.entries(session.results ?? {}).map(([id, result]) => [id, normalizePersistedAgentResult(result)]),
-    ),
-    outputs: session.outputs ?? {},
-    reviews: session.reviews ?? {},
-    lounge: session.lounge ?? [],
-    minutes: session.minutes ?? [],
-    actionLog: session.actionLog ?? [],
-    anonymization: normalizeAnonymizationState(session.anonymization),
-    archivedAt: session.archivedAt,
-  }));
+    results: normalizeAgentResults(value?.results ?? sessionFallback.results),
+    outputs: normalizeOutputs(value?.outputs ?? sessionFallback.outputs),
+    reviews: normalizeReviews(value?.reviews ?? sessionFallback.reviews),
+    lounge: normalizeLoungeMessages(value?.lounge ?? sessionFallback.lounge),
+    clerkDraft: normalizeClerkDraft(value?.clerkDraft),
+    signedRecord: value?.signedRecord ? String(value.signedRecord) : undefined,
+    actionLog: normalizeActionLogEntries(value?.actionLog ?? sessionFallback.actionLog),
+    createdAt: String(value?.createdAt ?? sessionFallback.createdAt ?? new Date().toISOString()),
+    updatedAt: String(value?.updatedAt ?? sessionFallback.updatedAt ?? new Date().toISOString()),
+  };
+};
+
+const normalizePersistedState = (parsed: Partial<PersistedState>): PersistedState => {
+  const sessions = (parsed.sessions ?? []).map((session: any) => {
+    const selectedArchetypes = Array.isArray(session.selectedArchetypes) ? session.selectedArchetypes.map(String) : defaultSession;
+    const settings = {
+      ...defaultAgentSettings,
+      ...(session.settings ?? {}),
+    };
+    const results = normalizeAgentResults(session.results);
+    const outputs = normalizeOutputs(session.outputs);
+    const reviews = normalizeReviews(session.reviews);
+    const lounge = normalizeLoungeMessages(session.lounge);
+    const minutes = Array.isArray(session.minutes) ? session.minutes.map(String) : [];
+    const actionLog = normalizeActionLogEntries(session.actionLog);
+    const sessionFallback = {
+      ...session,
+      selectedArchetypes,
+      settings,
+      results,
+      outputs,
+      reviews,
+      lounge,
+      actionLog,
+    } as Partial<QuorumSession>;
+    const restoredTurns: SessionTurn[] = Array.isArray(session.turns)
+      ? session.turns.map((turn: any, index: number) => normalizeSessionTurn(turn, index + 1, sessionFallback))
+      : [];
+    const hasLegacyTurn =
+      Object.keys(results).length > 0 || Object.keys(outputs).length > 0 || lounge.length > 0 || minutes.length > 0;
+    const legacyTurn = hasLegacyTurn ? [normalizeSessionTurn(undefined, 1, sessionFallback)] : [];
+    const turns = restoredTurns.length ? restoredTurns : legacyTurn;
+    const activeTurnId = turns.some((turn) => turn.id === session.activeTurnId) ? String(session.activeTurnId) : turns[0]?.id;
+
+    return {
+      ...session,
+      settings,
+      selectedArchetypes,
+      results,
+      outputs,
+      reviews,
+      lounge,
+      turns,
+      activeTurnId,
+      minutes,
+      actionLog,
+      anonymization: normalizeAnonymizationState(session.anonymization),
+      archivedAt: session.archivedAt,
+    };
+  });
 
   return {
     schemaVersion: storageVersion,
@@ -474,6 +627,32 @@ const formatSessionMarkdown = (session: QuorumSession, sessions: QuorumSession[]
       return `- ${id}\n${points}`;
     })
     .join("\n");
+  const turns = session.turns.length
+    ? [...session.turns]
+        .sort((a, b) => a.index - b.index)
+        .map((turn) => {
+          const counts = turnReviewCounts(turn.reviews);
+          const turnOutputs = Object.entries(turn.results)
+            .map(([id, result]) => {
+              const points = result?.keyPoints?.length ? result.keyPoints.map((point) => `    - ${point}`).join("\n") : "    - No key points recorded.";
+              return `  - ${id}\n${points}`;
+            })
+            .join("\n");
+
+          return [
+            `### ${turn.title}`,
+            `- Status: ${turn.status}`,
+            `- Updated: ${formatDateTime(turn.updatedAt)}`,
+            `- Privacy preflight: ${turn.privacyPreflight.label}`,
+            `- Reviews: ${counts.accepted} accepted, ${counts.rejected} rejected, ${counts.revision} revision requested`,
+            `- Lounge messages: ${turn.lounge.length}`,
+            turn.signedRecord ? "- Signed record: yes" : "- Signed record: no",
+            "",
+            turnOutputs || "No archetype results captured for this turn.",
+          ].join("\n");
+        })
+        .join("\n\n")
+    : "No persistent turns yet.";
 
   return [
     `# ${session.title}`,
@@ -488,6 +667,7 @@ const formatSessionMarkdown = (session: QuorumSession, sessions: QuorumSession[]
     session.followUpNote ? `## Follow-up Update\n\n${session.followUpNote}` : "",
     `## Context\n\n${session.sourceText}`,
     `## Signed Records\n\n${records}`,
+    `## Turns\n\n${turns}`,
     `## Action Log\n\n${actions}`,
     `## Archetype Summaries\n\n${outputs || "No archetype results captured yet."}`,
   ]
@@ -805,6 +985,35 @@ const privacyPreflightFor = (session?: QuorumSession): PrivacyPreflight => {
   };
 };
 
+const activeTurnForSession = (session?: QuorumSession) =>
+  session?.turns.find((turn) => turn.id === session.activeTurnId) ?? session?.turns[0];
+
+const updateTurnInList = (turns: SessionTurn[], turnId: string | undefined, updater: (turn: SessionTurn) => SessionTurn) => {
+  if (!turnId) return turns;
+  return turns.map((turn) => (turn.id === turnId ? updater({ ...turn, updatedAt: new Date().toISOString() }) : turn));
+};
+
+const turnReviewCounts = (reviews: Partial<Record<ArchetypeId, ReviewStatus>>) => ({
+  accepted: Object.values(reviews).filter((status) => status === "accepted").length,
+  rejected: Object.values(reviews).filter((status) => status === "rejected").length,
+  revision: Object.values(reviews).filter((status) => status === "revision").length,
+});
+
+const formatTurnForContext = (turn: SessionTurn) => {
+  const counts = turnReviewCounts(turn.reviews);
+  const acceptedPoints = Object.entries(turn.results)
+    .filter(([id]) => turn.reviews[id] === "accepted" || !turn.reviews[id])
+    .flatMap(([id, result]) => (result?.keyPoints ?? []).slice(0, 2).map((point) => `- ${id}: ${point}`))
+    .slice(0, 8);
+
+  return [
+    `${turn.title} (${turn.status}, ${formatDateTime(turn.updatedAt)})`,
+    `Reviews: ${counts.accepted} accepted, ${counts.rejected} rejected, ${counts.revision} revision requested.`,
+    turn.signedRecord ? "Signed record exists." : "No signed record for this turn.",
+    acceptedPoints.length ? `Key points:\n${acceptedPoints.join("\n")}` : "No key points captured yet.",
+  ].join("\n");
+};
+
 const statusLabel: Record<ReviewStatus, string> = {
   pending: "Pending",
   accepted: "Accepted",
@@ -848,6 +1057,7 @@ function App() {
 
   const allArchetypes = useMemo(() => [...archetypes, ...persisted.customArchetypes], [persisted.customArchetypes]);
   const activeSession = persisted.sessions.find((session) => session.id === persisted.activeSessionId);
+  const activeTurn = activeTurnForSession(activeSession);
   const activeSettings = activeSession?.settings ?? persisted.settings;
   const selectedArchetypes = activeSession?.selectedArchetypes ?? persisted.selectedArchetypes;
   const clinicalInputBlocked = Boolean(activeSession?.mode === "clinical" && !activeSession.anonymization?.approvedForLive);
@@ -1035,24 +1245,45 @@ function App() {
     }));
   };
 
-  const hydrateSessionState = (session: QuorumSession) => {
+  const hydrateSessionState = (session: QuorumSession, turnId = session.activeTurnId) => {
     timers.current.forEach(window.clearTimeout);
     timers.current = [];
-    setOutputs(session.outputs ?? {});
-    setAgentResults(session.results ?? {});
-    setReviews(session.reviews ?? {});
+    const turn = session.turns.find((item) => item.id === turnId) ?? activeTurnForSession(session);
+    const hydratedOutputs = turn?.outputs ?? session.outputs ?? {};
+    const hydratedResults = turn?.results ?? session.results ?? {};
+    const hydratedReviews = turn?.reviews ?? session.reviews ?? {};
+    setOutputs(hydratedOutputs);
+    setAgentResults(hydratedResults);
+    setReviews(hydratedReviews);
     setSources({});
-    setPlannerVisible(false);
-    setClerkDraft(null);
+    setPlannerVisible(Boolean(turn?.clerkDraft));
+    setClerkDraft(turn?.clerkDraft ?? null);
     setQuorumFlash(false);
     setTurnReviewOpen(false);
     setTurnReviewIndex(0);
-    setCallState(Object.keys(session.results ?? {}).length ? "complete" : "idle");
+    setCallState(Object.keys(hydratedResults).length ? "complete" : "idle");
     setLoungeSpeaker(session.selectedArchetypes[0] ?? "intern");
     setLoungeTarget("floor");
     setLoungePrompt("");
     setLoungeRunning(false);
     setFollowUpText("");
+  };
+
+  const openSessionTurn = (turnId: string) => {
+    if (!activeSession) return;
+
+    const turn = activeSession.turns.find((item) => item.id === turnId);
+    if (!turn) return;
+
+    hydrateSessionState(activeSession, turnId);
+    updateActiveSession((session) => ({
+      ...session,
+      activeTurnId: turnId,
+      results: turn.results,
+      outputs: turn.outputs,
+      reviews: turn.reviews,
+      lounge: turn.lounge,
+    }));
   };
 
   const appendAction = (label: string, detail: string) => {
@@ -1067,6 +1298,10 @@ function App() {
       updateActiveSession((session) => ({
         ...session,
         actionLog: [entry, ...session.actionLog].slice(0, 30),
+        turns: updateTurnInList(session.turns, session.activeTurnId, (turn) => ({
+          ...turn,
+          actionLog: [entry, ...turn.actionLog].slice(0, 30),
+        })),
       }));
       return;
     }
@@ -1090,6 +1325,7 @@ function App() {
       outputs: {},
       reviews: {},
       lounge: [],
+      turns: [],
       minutes: [],
       actionLog: [
         {
@@ -1157,6 +1393,7 @@ function App() {
       outputs: {},
       reviews: {},
       lounge: [],
+      turns: [],
       minutes: [],
       actionLog: [
         {
@@ -1381,6 +1618,9 @@ function App() {
     const parentSession = activeSession.parentSessionId
       ? persisted.sessions.find((session) => session.id === activeSession.parentSessionId)
       : undefined;
+    const priorTurnContext = activeSession.turns.length
+      ? activeSession.turns.slice(0, 4).map(formatTurnForContext).join("\n\n")
+      : "";
 
     return [
       `Session title: ${activeSession.title}`,
@@ -1388,6 +1628,7 @@ function App() {
       parentSession ? `Linked previous Session: ${parentSession.title}` : "",
       `Privacy preflight: ${privacyPreflightFor(activeSession).label}`,
       `Payload status: ${privacyPreflightFor(activeSession).payload}`,
+      priorTurnContext ? `Prior/active turn record:\n${priorTurnContext}` : "",
       activeSession.mode === "clinical" && activeSession.anonymization
         ? "Submitted context after local anonymization:"
         : "Submitted context:",
@@ -1429,7 +1670,7 @@ function App() {
     return `${agent?.shortName ?? "This card"} is speaking from ${stance}.${source} The key move is to separate assumptions, uncertainties, and the next concrete decision before the Chair commits anything.`;
   };
 
-  const persistAgentResult = (id: ArchetypeId, result: AgentResult, outputText = result.answer) => {
+  const persistAgentResult = (id: ArchetypeId, result: AgentResult, outputText = result.answer, turnId = activeSession?.activeTurnId) => {
     if (!activeSession) return;
 
     updateActiveSession((session) => ({
@@ -1442,13 +1683,39 @@ function App() {
         ...session.outputs,
         [id]: outputText,
       },
+      turns: updateTurnInList(session.turns, turnId ?? session.activeTurnId, (turn) => ({
+        ...turn,
+        status: turn.status === "signed" ? "signed" : "reviewing",
+        results: {
+          ...turn.results,
+          [id]: result,
+        },
+        outputs: {
+          ...turn.outputs,
+          [id]: outputText,
+        },
+      })),
     }));
   };
 
-  const openTurnReview = () => {
+  const openTurnReview = (turnId = activeSession?.activeTurnId) => {
     setTurnReviewIndex(0);
     setTurnReviewOpen(true);
-    appendAction("Turn ready for review", `${selectedArchetypes.length} archetype contributions are ready for card-by-card review.`);
+    const entry: ActionLogEntry = {
+      id: createId("act"),
+      at: new Date().toISOString(),
+      label: "Turn ready for review",
+      detail: `${selectedArchetypes.length} archetype contributions are ready for card-by-card review.`,
+    };
+    updateActiveSession((session) => ({
+      ...session,
+      actionLog: [entry, ...session.actionLog].slice(0, 30),
+      turns: updateTurnInList(session.turns, turnId ?? session.activeTurnId, (turn) => ({
+        ...turn,
+        status: turn.status === "signed" ? "signed" : "reviewing",
+        actionLog: [entry, ...turn.actionLog].slice(0, 30),
+      })),
+    }));
   };
 
   const runAgentApi = async (id: ArchetypeId, chairQuestion?: string) => {
@@ -1499,6 +1766,8 @@ function App() {
   };
 
   const callSession = () => {
+    if (!activeSession) return;
+
     timers.current.forEach(window.clearTimeout);
     timers.current = [];
     setOutputs({});
@@ -1509,7 +1778,43 @@ function App() {
     setClerkDraft(null);
     setCallState("calling");
     setQuorumFlash(true);
-    appendAction("Session called", `${selectedArchetypes.length} archetype cards were called to the Floor.`);
+    const now = new Date().toISOString();
+    const turnId = createId("turn");
+    const action: ActionLogEntry = {
+      id: createId("act"),
+      at: now,
+      label: "Session called",
+      detail: `${selectedArchetypes.length} archetype cards were called to the Floor.`,
+    };
+    const turn: SessionTurn = {
+      id: turnId,
+      index: activeSession.turns.length + 1,
+      title: `Turn ${activeSession.turns.length + 1}`,
+      status: "called",
+      motion: currentMotion,
+      contextSnapshot: caseContext(),
+      privacyPreflight: privacyPreflightFor(activeSession),
+      selectedArchetypes: [...selectedArchetypes],
+      settings: { ...activeSettings },
+      results: {},
+      outputs: {},
+      reviews: {},
+      lounge: [],
+      actionLog: [action],
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    updateActiveSession((session) => ({
+      ...session,
+      activeTurnId: turnId,
+      results: {},
+      outputs: {},
+      reviews: {},
+      lounge: [],
+      turns: [turn, ...session.turns].slice(0, 30),
+      actionLog: [action, ...session.actionLog].slice(0, 30),
+    }));
 
     timers.current.push(
       window.setTimeout(() => {
@@ -1532,13 +1837,13 @@ function App() {
           }
           setOutputs((previous) => ({ ...previous, [id]: "" }));
           setAgentResults((previous) => ({ ...previous, [id]: result }));
-          persistAgentResult(id, result);
+          persistAgentResult(id, result, result.answer, turnId);
           typeOutput(id, result.answer || fallbackFor(id), index * 220);
         }),
       ).then(() => {
         setQuorumFlash(false);
         setCallState("complete");
-        openTurnReview();
+        openTurnReview(turnId);
       });
 
       return;
@@ -1553,7 +1858,7 @@ function App() {
       const estimated = startDelay + Math.ceil(text.length / 7) * 24;
       longest = Math.max(longest, estimated);
       setAgentResults((previous) => ({ ...previous, [id]: result }));
-      persistAgentResult(id, result, text);
+      persistAgentResult(id, result, text, turnId);
       typeOutput(id, text, startDelay);
     });
 
@@ -1561,7 +1866,7 @@ function App() {
       window.setTimeout(() => {
         setQuorumFlash(false);
         setCallState("complete");
-        openTurnReview();
+        openTurnReview(turnId);
       }, longest + 450),
     );
   };
@@ -1623,6 +1928,13 @@ function App() {
           ...session.reviews,
           [id]: status,
         },
+        turns: updateTurnInList(session.turns, session.activeTurnId, (turn) => ({
+          ...turn,
+          reviews: {
+            ...turn.reviews,
+            [id]: status,
+          },
+        })),
       }));
     }
     appendAction(statusLabel[status], `${agent?.name ?? id} marked as ${statusLabel[status].toLowerCase()}.`);
@@ -1705,11 +2017,26 @@ function App() {
       updateActiveSession((session) => ({
         ...session,
         lounge: [message, ...session.lounge].slice(0, 20),
+        turns: updateTurnInList(session.turns, session.activeTurnId, (turn) => ({
+          ...turn,
+          lounge: [message, ...turn.lounge].slice(0, 20),
+        })),
       }));
       setLoungePrompt("");
     } finally {
       setLoungeRunning(false);
     }
+  };
+
+  const persistClerkDraft = (draft: ClerkDraft) => {
+    setClerkDraft(draft);
+    updateActiveSession((session) => ({
+      ...session,
+      turns: updateTurnInList(session.turns, session.activeTurnId, (turn) => ({
+        ...turn,
+        clerkDraft: draft,
+      })),
+    }));
   };
 
   const draftPlanner = async () => {
@@ -1739,7 +2066,7 @@ function App() {
         if (!response.ok) throw new Error(payload.error || "Planner Clerk failed");
         const draft = parseClerkDraft(payload);
         if (draft) {
-          setClerkDraft(draft);
+          persistClerkDraft(draft);
           return;
         }
       } catch {
@@ -1747,7 +2074,7 @@ function App() {
       }
     }
 
-    setClerkDraft(fallbackClerkDraft(activeSession?.mode ?? "thinking", selectedRoster, agentResults, reviews));
+    persistClerkDraft(fallbackClerkDraft(activeSession?.mode ?? "thinking", selectedRoster, agentResults, reviews));
   };
 
   const commitMinutes = () => {
@@ -1776,6 +2103,12 @@ function App() {
       label: item.label,
       detail: `[${item.priority}] ${item.detail} Owner: ${item.owner}.`,
     }));
+    const signedAction: ActionLogEntry = {
+      id: createId("act"),
+      at: new Date().toISOString(),
+      label: "Record signed",
+      detail: `${draft.actions.length} Clerk actions and ${draft.takeaways.length} takeaways were committed to the session record.`,
+    };
 
     updateActiveSession((session) => ({
       ...session,
@@ -1784,15 +2117,17 @@ function App() {
         ...session.minutes.filter((entry) => !entry.startsWith(`${session.title} signed record`)),
       ],
       actionLog: [
-        {
-          id: createId("act"),
-          at: new Date().toISOString(),
-          label: "Record signed",
-          detail: `${draft.actions.length} Clerk actions and ${draft.takeaways.length} takeaways were committed to the session record.`,
-        },
+        signedAction,
         ...actionEntries,
         ...session.actionLog,
       ].slice(0, 30),
+      turns: updateTurnInList(session.turns, session.activeTurnId, (turn) => ({
+        ...turn,
+        status: "signed",
+        clerkDraft: draft,
+        signedRecord,
+        actionLog: [signedAction, ...actionEntries, ...turn.actionLog].slice(0, 30),
+      })),
     }));
     setPersisted((previous) => ({ ...previous, activeSessionId: undefined }));
     setView("docket");
@@ -1908,6 +2243,7 @@ function App() {
       ) : (
         <FloorView
           session={activeSession}
+          activeTurn={activeTurn}
           motion={currentMotion}
           allArchetypes={allArchetypes}
           selectedRoster={selectedRoster}
@@ -1932,6 +2268,7 @@ function App() {
           onSetClinicalLiveApproval={setClinicalLiveApproval}
           onUpdateAnonymizedText={updateAnonymizedText}
           onCallSession={callSession}
+          onOpenTurn={openSessionTurn}
           onReview={setReview}
           onReroll={rerollAgent}
           loungeSpeaker={loungeSpeaker}
@@ -2224,8 +2561,7 @@ function DocketView({
                       <button key={session.id} onClick={() => onOpenSession(session.id)} type="button">
                         <strong>{session.title}</strong>
                         <span>
-                          {session.mode === "clinical" ? "Clinical" : "Thinking"} - {session.selectedArchetypes.length} cards -{" "}
-                          {session.minutes.length} records
+                          {session.mode === "clinical" ? "Clinical" : "Thinking"} - {session.turns.length} turns - {session.minutes.length} records
                         </span>
                         {parentSession && <em>Follow-up to {parentSession.title}</em>}
                       </button>
@@ -2258,7 +2594,7 @@ function DocketView({
                       <span>{depth > 0 ? "Follow-up" : "Primary"}</span>
                       <strong>{session.title}</strong>
                       <small>
-                        {formatDateTime(session.updatedAt)} - {session.minutes.length} records
+                        {formatDateTime(session.updatedAt)} - {session.turns.length} turns - {session.minutes.length} records
                       </small>
                     </button>
                   ))
@@ -2384,6 +2720,32 @@ function DocketView({
                         <p>No action-log entries yet.</p>
                       )}
                     </section>
+                    <section>
+                      <span className="mini-label">Turns</span>
+                      {selectedLedgerSession.turns.length ? (
+                        <ul>
+                          {[...selectedLedgerSession.turns]
+                            .sort((a, b) => b.index - a.index)
+                            .slice(0, 8)
+                            .map((turn) => {
+                              const counts = turnReviewCounts(turn.reviews);
+                              return (
+                                <li key={turn.id}>
+                                  <strong>
+                                    {turn.title} - {turn.status}
+                                  </strong>
+                                  <span>
+                                    {Object.keys(turn.results).length}/{turn.selectedArchetypes.length} cards; {counts.accepted} accepted;{" "}
+                                    {turn.lounge.length} lounge turns
+                                  </span>
+                                </li>
+                              );
+                            })}
+                        </ul>
+                      ) : (
+                        <p>No persistent turns yet.</p>
+                      )}
+                    </section>
                     <section className="ledger-records">
                       <span className="mini-label">Signed records</span>
                       {selectedLedgerSession.minutes.length ? (
@@ -2412,6 +2774,7 @@ function DocketView({
 
 type FloorProps = {
   session: QuorumSession;
+  activeTurn?: SessionTurn;
   motion: string;
   allArchetypes: Archetype[];
   selectedRoster: Archetype[];
@@ -2436,6 +2799,7 @@ type FloorProps = {
   onSetClinicalLiveApproval: (approvedForLive: boolean) => void;
   onUpdateAnonymizedText: (value: string) => void;
   onCallSession: () => void;
+  onOpenTurn: (turnId: string) => void;
   onReview: (id: ArchetypeId, status: ReviewStatus) => void;
   onReroll: (id: ArchetypeId) => void;
   loungeSpeaker: ArchetypeId;
@@ -2461,6 +2825,7 @@ type FloorProps = {
 
 function FloorView({
   session,
+  activeTurn,
   motion,
   allArchetypes,
   selectedRoster,
@@ -2485,6 +2850,7 @@ function FloorView({
   onSetClinicalLiveApproval,
   onUpdateAnonymizedText,
   onCallSession,
+  onOpenTurn,
   onReview,
   onReroll,
   loungeSpeaker,
@@ -2568,6 +2934,11 @@ function FloorView({
               onUpdateText={onUpdateAnonymizedText}
             />
           )}
+          <TurnTimeline
+            activeTurnId={session.activeTurnId}
+            onOpenTurn={onOpenTurn}
+            turns={session.turns}
+          />
           <div className="follow-up-card">
             <div>
               <span className="mini-label">Follow-up Session</span>
@@ -2593,8 +2964,8 @@ function FloorView({
       <section className="floor-main">
         <div className="motion-panel">
           <div>
-            <span className="section-label">The Motion</span>
-            <h1>Call the Session</h1>
+            <span className="section-label">{activeTurn ? `Active ${activeTurn.title}` : "The Motion"}</span>
+            <h1>{session.turns.length ? "Call Next Turn" : "Call the Session"}</h1>
             <p>{motion}</p>
           </div>
           <button className="primary-button" disabled={callState === "calling"} onClick={onCallSession} type="button">
@@ -3049,6 +3420,62 @@ function TurnReviewOverlay({
           </button>
         </footer>
       </section>
+    </div>
+  );
+}
+
+function TurnTimeline({
+  activeTurnId,
+  onOpenTurn,
+  turns,
+}: {
+  activeTurnId?: string;
+  onOpenTurn: (turnId: string) => void;
+  turns: SessionTurn[];
+}) {
+  if (!turns.length) {
+    return (
+      <div className="turn-timeline empty">
+        <span className="mini-label">Turn history</span>
+        <p>No turns called yet. The first call will create a persistent turn record.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="turn-timeline">
+      <div className="turn-timeline-heading">
+        <span className="mini-label">Turn history</span>
+        <strong>{turns.length} saved</strong>
+      </div>
+      <div className="turn-list">
+        {[...turns]
+          .sort((a, b) => b.index - a.index)
+          .map((turn) => {
+            const counts = turnReviewCounts(turn.reviews);
+            const resultCount = Object.keys(turn.results).length;
+
+            return (
+              <button
+                className={turn.id === activeTurnId ? "active" : ""}
+                key={turn.id}
+                onClick={() => onOpenTurn(turn.id)}
+                type="button"
+              >
+                <span>
+                  <strong>{turn.title}</strong>
+                  <em>{turn.status}</em>
+                </span>
+                <small>
+                  {formatDateTime(turn.updatedAt)} - {resultCount}/{turn.selectedArchetypes.length} cards
+                </small>
+                <small>
+                  {counts.accepted} accepted - {counts.rejected} rejected - {turn.lounge.length} lounge
+                </small>
+              </button>
+            );
+          })}
+      </div>
     </div>
   );
 }

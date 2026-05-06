@@ -23,6 +23,7 @@ The current product surface includes:
 - The "We have quorum" call moment.
 - Live OpenAI calls when a server-side API key is present.
 - Deterministic fallback outputs when live calls are unavailable.
+- Persistent Session turns with review state, lounge messages, Clerk drafts, and signed records.
 - A Lounge for routing follow-up turns between archetypes.
 - Chair review controls: accept, reject, request revision, and reroll.
 - Clerk summaries, signed records, and an action log.
@@ -70,6 +71,7 @@ The browser calls local endpoints (`/api/runtime`, `/api/agent`, `/api/lounge`, 
 7. Ask direct follow-ups or route a Lounge turn between archetypes.
 8. Accept, reject, reroll, or request revision.
 9. Ask the Clerk to summarize key actions and commit the signed record.
+10. Call the next turn from the same Session when the Chair wants to continue deliberation.
 
 ## Runtime stance
 
