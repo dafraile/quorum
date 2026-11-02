@@ -1790,8 +1790,8 @@ function App() {
   const runAgentApi = async (id: ArchetypeId, chairQuestion?: string) => {
     const agent = allArchetypes.find((item) => item.id === id)!;
     const settings = activeSettings[id] ?? defaultAgentSettings[id] ?? defaultAgentSettings.intern;
-    if (settings.provider !== "openai") {
-      throw new Error(`${settings.provider} runtime is not wired yet`);
+    if (settings.provider === "local") {
+      throw new Error("Local model runtime is not wired yet");
     }
 
     const controller = new AbortController();
@@ -1812,6 +1812,7 @@ function App() {
           caseContext: caseContext(),
           previousOutput: outputs[id],
           chairQuestion,
+          provider: settings.provider,
           model: settings.model,
           reasoning: settings.reasoning,
           evidenceMode: settings.evidenceMode,
@@ -1819,7 +1820,7 @@ function App() {
       });
 
       const payload = await response.json();
-      if (!response.ok) throw new Error(payload.error || "OpenAI API call failed");
+      if (!response.ok) throw new Error(payload.error || "Model API call failed");
 
       const result = parseAgentResult(payload, id);
       if (payload.sources?.length) {
@@ -3843,7 +3844,7 @@ function CardSettings({
   const customRules = agent.rules.join("\n");
   const providerModels: Record<AgentSettings["provider"], string[]> = {
     openai: ["server-default", "gpt-5.5", "gpt-5.5-pro", "gpt-5", "gpt-4.1"],
-    anthropic: ["future-anthropic-default", "claude-opus-4.1", "claude-sonnet-4.5"],
+    anthropic: ["server-default", "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"],
     local: ["future-local-default", "ollama", "lm-studio"],
   };
 
@@ -3902,7 +3903,7 @@ function CardSettings({
           }
         >
           <option value="openai">OpenAI</option>
-          <option value="anthropic">Anthropic (future)</option>
+          <option value="anthropic">Anthropic</option>
           <option value="local">Local model (future)</option>
         </select>
       </label>
@@ -3937,7 +3938,10 @@ function CardSettings({
           Evidence web search
         </label>
       )}
-      {settings.provider !== "openai" && <p className="provider-note">Stored as a card preference; runtime adapter pending.</p>}
+      {settings.provider === "local" && <p className="provider-note">Stored as a card preference; runtime adapter pending.</p>}
+      {settings.provider === "anthropic" && agent.id === "biblioRat" && settings.evidenceMode && (
+        <p className="provider-note">Evidence web search runs on OpenAI only; on Anthropic this card answers without it.</p>
+      )}
     </div>
   );
 }

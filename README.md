@@ -39,27 +39,35 @@ npm run dev -- --port 5173
 
 Open `http://localhost:5173`.
 
-Build check:
+Build check (client, type-checked server, and bundled production server):
 
 ```bash
 npm run build
 ```
 
-## Live OpenAI mode
-
-The app runs without network access using deterministic fallback outputs. To enable real model calls, start Vite with an OpenAI key in the server environment:
+Production server (serves `dist/` and the same `/api` routes on one port):
 
 ```bash
-OPENAI_API_KEY=... npm run dev -- --port 5173
+npm run build
+PORT=8080 npm start
 ```
 
-Optional:
+## Live model mode
+
+The app runs without network access using deterministic fallback outputs. To enable real model calls, put provider keys in the server environment:
+
+```bash
+OPENAI_API_KEY=... ANTHROPIC_API_KEY=... npm run dev -- --port 5173
+```
+
+Optional defaults (used when a card's model is "Server default"):
 
 ```bash
 OPENAI_MODEL=gpt-5.5
+ANTHROPIC_MODEL=claude-opus-5-5
 ```
 
-The browser calls local endpoints (`/api/runtime`, `/api/agent`, `/api/lounge`, and `/api/clerk`). The API key stays server-side in the Vite dev process. If a live call times out or fails, the affected card falls back to a deterministic local response.
+Each archetype card chooses its provider (OpenAI or Anthropic) in its settings. The browser calls `/api/runtime`, `/api/agent` and `/api/clerk`; keys stay server-side, in the Vite dev process or the production server. OpenAI requests are sent with `store: false`. Evidence web search for the Biblio Rat runs on OpenAI only. If a live call times out or fails, the affected card falls back to a deterministic local response.
 
 ## Working Flow
 
