@@ -128,7 +128,11 @@ type SessionTurn = {
   outputs: Partial<Record<ArchetypeId, string>>;
   reviews: Partial<Record<ArchetypeId, ReviewStatus>>;
   lounge: LoungeMessage[];
+  aiClerkDraft?: ClerkDraft;
+  chairClerkDraft?: ClerkDraft;
   clerkDraft?: ClerkDraft;
+  nextTurnBrief?: string;
+  briefEditedAt?: string;
   signedRecord?: string;
   actionLog: ActionLogEntry[];
   createdAt: string;
@@ -169,7 +173,7 @@ type PersistedState = {
 
 const storageKey = "quorum-state-v1";
 const legacyStorageKey = "quorum-demo-state-v033";
-const storageVersion = 3;
+const storageVersion = 4;
 const persistenceDbName = "quorum-workbench";
 const persistenceStoreName = "state";
 const persistenceStateKey = "persisted-state";
@@ -327,6 +331,9 @@ const normalizeSessionTurn = (value: any, fallbackIndex: number, sessionFallback
   const index = Number(value?.index ?? fallbackIndex);
   const rawStatus = value?.status;
   const status: SessionTurnStatus = rawStatus === "signed" || rawStatus === "reviewing" || rawStatus === "called" ? rawStatus : "reviewing";
+  const legacyClerkDraft = normalizeClerkDraft(value?.clerkDraft);
+  const aiClerkDraft = normalizeClerkDraft(value?.aiClerkDraft) ?? legacyClerkDraft;
+  const chairClerkDraft = normalizeClerkDraft(value?.chairClerkDraft) ?? legacyClerkDraft;
 
   return {
     id: String(value?.id ?? createId("turn")),
@@ -348,7 +355,11 @@ const normalizeSessionTurn = (value: any, fallbackIndex: number, sessionFallback
     outputs: normalizeOutputs(value?.outputs ?? sessionFallback.outputs),
     reviews: normalizeReviews(value?.reviews ?? sessionFallback.reviews),
     lounge: normalizeLoungeMessages(value?.lounge ?? sessionFallback.lounge),
-    clerkDraft: normalizeClerkDraft(value?.clerkDraft),
+    aiClerkDraft,
+    chairClerkDraft,
+    clerkDraft: chairClerkDraft ?? legacyClerkDraft,
+    nextTurnBrief: value?.nextTurnBrief ? String(value.nextTurnBrief) : undefined,
+    briefEditedAt: value?.briefEditedAt ? String(value.briefEditedAt) : undefined,
     signedRecord: value?.signedRecord ? String(value.signedRecord) : undefined,
     actionLog: normalizeActionLogEntries(value?.actionLog ?? sessionFallback.actionLog),
     createdAt: String(value?.createdAt ?? sessionFallback.createdAt ?? new Date().toISOString()),
@@ -647,7 +658,9 @@ const formatSessionMarkdown = (session: QuorumSession, sessions: QuorumSession[]
             `- Reviews: ${counts.accepted} accepted, ${counts.rejected} rejected, ${counts.revision} revision requested`,
             `- Lounge messages: ${turn.lounge.length}`,
             turn.signedRecord ? "- Signed record: yes" : "- Signed record: no",
+            turn.nextTurnBrief ? "- Next-turn brief: yes" : "- Next-turn brief: no",
             "",
+            turn.nextTurnBrief ? `Carry-forward brief:\n${turn.nextTurnBrief}\n` : "",
             turnOutputs || "No archetype results captured for this turn.",
           ].join("\n");
         })
@@ -1014,6 +1027,55 @@ const formatTurnForContext = (turn: SessionTurn) => {
   ].join("\n");
 };
 
+const buildTurnBrief = (session: QuorumSession, turn: SessionTurn, allArchetypes: Archetype[]) => {
+  const archetypeLabel = (id: ArchetypeId) => allArchetypes.find((agent) => agent.id === id)?.shortName ?? id;
+  const finalDraft = turn.chairClerkDraft ?? turn.clerkDraft;
+  const acceptedPoints = Object.entries(turn.results)
+    .filter(([id]) => turn.reviews[id] === "accepted")
+    .flatMap(([id, result]) => (result?.keyPoints ?? []).slice(0, 3).map((point) => `- ${archetypeLabel(id)}: ${point}`))
+    .slice(0, 8);
+  const rejectedOrRevision = Object.entries(turn.results)
+    .filter(([id]) => turn.reviews[id] === "rejected" || turn.reviews[id] === "revision")
+    .map(([id]) => `- ${archetypeLabel(id)}: ${turn.reviews[id] === "revision" ? "needs revision" : "rejected by Chair"}`)
+    .slice(0, 8);
+  const unresolved = [
+    ...(finalDraft?.unresolvedQuestions ?? []),
+    ...Object.values(turn.results).flatMap((result) => result?.missingQuestions ?? []),
+  ]
+    .filter(Boolean)
+    .slice(0, 8);
+  const actions = (finalDraft?.actions ?? [])
+    .map((action) => `- [${action.priority}] ${action.label}: ${action.detail} (${action.owner})`)
+    .slice(0, 8);
+  const lounge = turn.lounge
+    .slice(0, 5)
+    .map((message) => `- ${archetypeLabel(message.speakerId)} to ${message.targetId ? archetypeLabel(message.targetId) : "Floor"}: ${message.text}`)
+    .slice(0, 5);
+
+  return [
+    `Carry-forward brief for ${session.title}`,
+    `Source: ${turn.title}, ${formatDateTime(turn.updatedAt)}`,
+    "",
+    "Accepted points:",
+    acceptedPoints.length ? acceptedPoints.join("\n") : "- None accepted yet.",
+    "",
+    "Rejected or revision-needed points:",
+    rejectedOrRevision.length ? rejectedOrRevision.join("\n") : "- None marked rejected or revision-needed.",
+    "",
+    "Unresolved questions:",
+    unresolved.length ? unresolved.map((item) => `- ${item}`).join("\n") : "- None recorded.",
+    "",
+    "Signed or proposed actions:",
+    actions.length ? actions.join("\n") : "- No Clerk actions recorded.",
+    "",
+    "Lounge tensions:",
+    lounge.length ? lounge.join("\n") : "- No routed Lounge exchanges recorded.",
+    "",
+    "Chair instruction for next turn:",
+    "- Continue from this record. Do not restart the whole Session unless the Chair asks.",
+  ].join("\n");
+};
+
 const statusLabel: Record<ReviewStatus, string> = {
   pending: "Pending",
   accepted: "Accepted",
@@ -1042,6 +1104,7 @@ function App() {
   const [intakeTitle, setIntakeTitle] = useState("");
   const [intakeText, setIntakeText] = useState("");
   const [followUpText, setFollowUpText] = useState("");
+  const [turnBriefText, setTurnBriefText] = useState("");
   const [loungeSpeaker, setLoungeSpeaker] = useState<ArchetypeId>("intern");
   const [loungeTarget, setLoungeTarget] = useState<ArchetypeId | "floor">("floor");
   const [loungePrompt, setLoungePrompt] = useState("");
@@ -1170,6 +1233,7 @@ function App() {
     setLoungePrompt("");
     setLoungeRunning(false);
     setFollowUpText("");
+    setTurnBriefText("");
   };
 
   const resetDemo = () => {
@@ -1191,6 +1255,7 @@ function App() {
     setLoungePrompt("");
     setLoungeRunning(false);
     setFollowUpText("");
+    setTurnBriefText("");
     setView("docket");
   };
 
@@ -1256,8 +1321,9 @@ function App() {
     setAgentResults(hydratedResults);
     setReviews(hydratedReviews);
     setSources({});
-    setPlannerVisible(Boolean(turn?.clerkDraft));
-    setClerkDraft(turn?.clerkDraft ?? null);
+    const hydratedClerkDraft = turn?.chairClerkDraft ?? turn?.clerkDraft;
+    setPlannerVisible(Boolean(hydratedClerkDraft));
+    setClerkDraft(hydratedClerkDraft ?? null);
     setQuorumFlash(false);
     setTurnReviewOpen(false);
     setTurnReviewIndex(0);
@@ -1267,6 +1333,7 @@ function App() {
     setLoungePrompt("");
     setLoungeRunning(false);
     setFollowUpText("");
+    setTurnBriefText(turn?.nextTurnBrief ?? "");
   };
 
   const openSessionTurn = (turnId: string) => {
@@ -1621,6 +1688,7 @@ function App() {
     const priorTurnContext = activeSession.turns.length
       ? activeSession.turns.slice(0, 4).map(formatTurnForContext).join("\n\n")
       : "";
+    const carryForwardBrief = activeTurn?.nextTurnBrief?.trim();
 
     return [
       `Session title: ${activeSession.title}`,
@@ -1629,6 +1697,7 @@ function App() {
       `Privacy preflight: ${privacyPreflightFor(activeSession).label}`,
       `Payload status: ${privacyPreflightFor(activeSession).payload}`,
       priorTurnContext ? `Prior/active turn record:\n${priorTurnContext}` : "",
+      carryForwardBrief ? `Chair-approved carry-forward brief for the next turn:\n${carryForwardBrief}` : "",
       activeSession.mode === "clinical" && activeSession.anonymization
         ? "Submitted context after local anonymization:"
         : "Submitted context:",
@@ -1776,6 +1845,7 @@ function App() {
     setReviews({});
     setPlannerVisible(false);
     setClerkDraft(null);
+    setTurnBriefText("");
     setCallState("calling");
     setQuorumFlash(true);
     const now = new Date().toISOString();
@@ -2034,9 +2104,42 @@ function App() {
       ...session,
       turns: updateTurnInList(session.turns, session.activeTurnId, (turn) => ({
         ...turn,
+        aiClerkDraft: draft,
+        chairClerkDraft: draft,
         clerkDraft: draft,
       })),
     }));
+  };
+
+  const updateChairClerkDraft = (draft: ClerkDraft) => {
+    setClerkDraft(draft);
+    updateActiveSession((session) => ({
+      ...session,
+      turns: updateTurnInList(session.turns, session.activeTurnId, (turn) => ({
+        ...turn,
+        chairClerkDraft: draft,
+        clerkDraft: draft,
+      })),
+    }));
+  };
+
+  const updateTurnBrief = (value: string) => {
+    setTurnBriefText(value);
+    updateActiveSession((session) => ({
+      ...session,
+      turns: updateTurnInList(session.turns, session.activeTurnId, (turn) => ({
+        ...turn,
+        nextTurnBrief: value,
+        briefEditedAt: new Date().toISOString(),
+      })),
+    }));
+  };
+
+  const generateTurnBrief = () => {
+    if (!activeSession || !activeTurn) return;
+    const brief = buildTurnBrief(activeSession, activeTurn, allArchetypes);
+    updateTurnBrief(brief);
+    appendAction("Turn brief prepared", `${activeTurn.title} now has a carry-forward brief for the next turn.`);
   };
 
   const draftPlanner = async () => {
@@ -2124,6 +2227,7 @@ function App() {
       turns: updateTurnInList(session.turns, session.activeTurnId, (turn) => ({
         ...turn,
         status: "signed",
+        chairClerkDraft: draft,
         clerkDraft: draft,
         signedRecord,
         actionLog: [signedAction, ...actionEntries, ...turn.actionLog].slice(0, 30),
@@ -2287,6 +2391,10 @@ function App() {
           onShowPlanner={draftPlanner}
           onCommit={commitMinutes}
           clerkDraft={clerkDraft}
+          onUpdateClerkDraft={updateChairClerkDraft}
+          onGenerateTurnBrief={generateTurnBrief}
+          turnBriefText={turnBriefText}
+          onUpdateTurnBrief={updateTurnBrief}
           followUpText={followUpText}
           onSetFollowUpText={setFollowUpText}
           onCreateFollowUpSession={createFollowUpSession}
@@ -2818,6 +2926,10 @@ type FloorProps = {
   onShowPlanner: () => void;
   onCommit: () => void;
   clerkDraft: ClerkDraft | null;
+  onUpdateClerkDraft: (draft: ClerkDraft) => void;
+  onGenerateTurnBrief: () => void;
+  turnBriefText: string;
+  onUpdateTurnBrief: (value: string) => void;
   followUpText: string;
   onSetFollowUpText: (value: string) => void;
   onCreateFollowUpSession: () => void;
@@ -2869,6 +2981,10 @@ function FloorView({
   onShowPlanner,
   onCommit,
   clerkDraft,
+  onUpdateClerkDraft,
+  onGenerateTurnBrief,
+  turnBriefText,
+  onUpdateTurnBrief,
   followUpText,
   onSetFollowUpText,
   onCreateFollowUpSession,
@@ -2938,6 +3054,12 @@ function FloorView({
             activeTurnId={session.activeTurnId}
             onOpenTurn={onOpenTurn}
             turns={session.turns}
+          />
+          <TurnBriefPanel
+            disabled={!activeTurn}
+            onGenerate={onGenerateTurnBrief}
+            onUpdate={onUpdateTurnBrief}
+            value={turnBriefText}
           />
           <div className="follow-up-card">
             <div>
@@ -3144,45 +3266,11 @@ function FloorView({
             </button>
           ) : (
             <div className="planner-draft">
-              <div className="clerk-record">
-                <span className="mini-label">Draft record</span>
-                <p>{visibleClerkDraft.minutes}</p>
-              </div>
-
-              <div className="clerk-draft-grid">
-                <div className="clerk-draft-block">
-                  <span className="mini-label">Key takeaways</span>
-                  <ul>
-                    {visibleClerkDraft.takeaways.map((item) => (
-                      <li key={item}>{item}</li>
-                    ))}
-                  </ul>
-                </div>
-                <div className="clerk-draft-block">
-                  <span className="mini-label">Proposed action log</span>
-                  <ul>
-                    {visibleClerkDraft.actions.map((item) => (
-                      <li key={`${item.label}-${item.detail}`}>
-                        <strong>{item.label}</strong>
-                        <span>
-                          {item.detail} <em>{item.priority} - {item.owner}</em>
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              </div>
-
-              {visibleClerkDraft.unresolvedQuestions.length > 0 && (
-                <div className="clerk-draft-block unresolved">
-                  <span className="mini-label">Unresolved questions</span>
-                  <ul>
-                    {visibleClerkDraft.unresolvedQuestions.map((item) => (
-                      <li key={item}>{item}</li>
-                    ))}
-                  </ul>
-                </div>
-              )}
+              <ClerkDraftEditor
+                aiDraft={activeTurn?.aiClerkDraft}
+                draft={visibleClerkDraft}
+                onChange={onUpdateClerkDraft}
+              />
 
               <div className="draft-actions">
                 <button className="primary-button" onClick={onCommit} type="button">
@@ -3424,6 +3512,146 @@ function TurnReviewOverlay({
   );
 }
 
+const listToEditableText = (items: string[]) => items.join("\n");
+
+const editableTextToList = (value: string) =>
+  value
+    .split("\n")
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+function ClerkDraftEditor({
+  aiDraft,
+  draft,
+  onChange,
+}: {
+  aiDraft?: ClerkDraft;
+  draft: ClerkDraft;
+  onChange: (draft: ClerkDraft) => void;
+}) {
+  const updateAction = (index: number, patch: Partial<ClerkActionDraft>) => {
+    onChange({
+      ...draft,
+      actions: draft.actions.map((action, actionIndex) => (actionIndex === index ? { ...action, ...patch } : action)),
+    });
+  };
+
+  const removeAction = (index: number) => {
+    onChange({
+      ...draft,
+      actions: draft.actions.filter((_, actionIndex) => actionIndex !== index),
+    });
+  };
+
+  const addAction = () => {
+    onChange({
+      ...draft,
+      actions: [
+        ...draft.actions,
+        {
+          label: "New action",
+          detail: "Define the next concrete step.",
+          owner: "Chair",
+          priority: "Next",
+        },
+      ],
+    });
+  };
+
+  return (
+    <div className="clerk-editor">
+      <div className="clerk-editor-heading">
+        <div>
+          <span className="mini-label">Chair-editable record</span>
+          <strong>Review before signing</strong>
+        </div>
+        {aiDraft && <small>AI draft preserved separately</small>}
+      </div>
+
+      <label className="clerk-field">
+        Summary
+        <textarea
+          aria-label="Edit Clerk summary"
+          onChange={(event) => onChange({ ...draft, minutes: event.target.value })}
+          value={draft.minutes}
+        />
+      </label>
+
+      <div className="clerk-draft-grid editable">
+        <label className="clerk-field">
+          Key takeaways
+          <textarea
+            aria-label="Edit Clerk takeaways"
+            onChange={(event) => onChange({ ...draft, takeaways: editableTextToList(event.target.value) })}
+            value={listToEditableText(draft.takeaways)}
+          />
+        </label>
+        <label className="clerk-field">
+          Unresolved questions
+          <textarea
+            aria-label="Edit unresolved questions"
+            onChange={(event) => onChange({ ...draft, unresolvedQuestions: editableTextToList(event.target.value) })}
+            value={listToEditableText(draft.unresolvedQuestions)}
+          />
+        </label>
+      </div>
+
+      <div className="clerk-action-editor">
+        <div className="clerk-editor-heading compact">
+          <span className="mini-label">Action log</span>
+          <button className="inline-action" onClick={addAction} type="button">
+            Add action
+          </button>
+        </div>
+        {draft.actions.length ? (
+          draft.actions.map((action, index) => (
+            <div className="clerk-action-row" key={`action-${index}`}>
+              <label>
+                Label
+                <input
+                  aria-label={`Edit action ${index + 1} label`}
+                  onChange={(event) => updateAction(index, { label: event.target.value })}
+                  value={action.label}
+                />
+              </label>
+              <label>
+                Owner
+                <input
+                  aria-label={`Edit action ${index + 1} owner`}
+                  onChange={(event) => updateAction(index, { owner: event.target.value })}
+                  value={action.owner}
+                />
+              </label>
+              <label>
+                Priority
+                <input
+                  aria-label={`Edit action ${index + 1} priority`}
+                  onChange={(event) => updateAction(index, { priority: event.target.value })}
+                  value={action.priority}
+                />
+              </label>
+              <label className="action-detail-field">
+                Detail
+                <textarea
+                  aria-label={`Edit action ${index + 1} detail`}
+                  onChange={(event) => updateAction(index, { detail: event.target.value })}
+                  value={action.detail}
+                />
+              </label>
+              <button className="ghost-button" onClick={() => removeAction(index)} type="button">
+                <X size={14} />
+                Remove
+              </button>
+            </div>
+          ))
+        ) : (
+          <div className="empty-lounge">No actions in this Clerk draft.</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function TurnTimeline({
   activeTurnId,
   onOpenTurn,
@@ -3476,6 +3704,36 @@ function TurnTimeline({
             );
           })}
       </div>
+    </div>
+  );
+}
+
+function TurnBriefPanel({
+  disabled,
+  onGenerate,
+  onUpdate,
+  value,
+}: {
+  disabled: boolean;
+  onGenerate: () => void;
+  onUpdate: (value: string) => void;
+  value: string;
+}) {
+  return (
+    <div className="turn-brief-panel">
+      <div className="turn-timeline-heading">
+        <span className="mini-label">Next-turn brief</span>
+        <button className="inline-action" disabled={disabled} onClick={onGenerate} type="button">
+          Brief next turn
+        </button>
+      </div>
+      <textarea
+        aria-label="Carry-forward brief for next turn"
+        disabled={disabled}
+        onChange={(event) => onUpdate(event.target.value)}
+        placeholder="Accepted points, unresolved questions, action ownership, and Lounge tensions will appear here."
+        value={value}
+      />
     </div>
   );
 }

@@ -26,7 +26,8 @@ The current product surface includes:
 - Persistent Session turns with review state, lounge messages, Clerk drafts, and signed records.
 - A Lounge for routing follow-up turns between archetypes.
 - Chair review controls: accept, reject, request revision, and reroll.
-- Clerk summaries, signed records, and an action log.
+- Editable Clerk summaries, signed records, and an action log.
+- Carry-forward briefs that seed the next turn from accepted points, unresolved questions, actions, and Lounge tensions.
 - An eosinophilia seed case for debugging the clinical workflow.
 
 ## Run
@@ -70,8 +71,9 @@ The browser calls local endpoints (`/api/runtime`, `/api/agent`, `/api/lounge`, 
 6. Call the Session and review the archetype outputs.
 7. Ask direct follow-ups or route a Lounge turn between archetypes.
 8. Accept, reject, reroll, or request revision.
-9. Ask the Clerk to summarize key actions and commit the signed record.
-10. Call the next turn from the same Session when the Chair wants to continue deliberation.
+9. Ask the Clerk to summarize key actions, edit the draft, and commit the signed record.
+10. Brief the next turn from the signed record and unresolved tensions.
+11. Call the next turn from the same Session when the Chair wants to continue deliberation.
 
 ## Runtime stance
 
