@@ -69,6 +69,37 @@ ANTHROPIC_MODEL=claude-opus-5-5
 
 Each archetype card chooses its provider (OpenAI or Anthropic) in its settings. The browser calls `/api/runtime`, `/api/agent` and `/api/clerk`; keys stay server-side, in the Vite dev process or the production server. OpenAI requests are sent with `store: false`. Evidence web search for the Biblio Rat runs on OpenAI only. If a live call times out or fails, the affected card falls back to a deterministic local response.
 
+## Study mode (GP pilot)
+
+A narrow, instrumented flow for the Macquarie University GP study (HREC project 520251820563964, Part 2), separate from the workbench:
+
+- `/study?t=<token>`: participant session. Consent → demographics → two synthetic cases (counterbalanced dyadic/triadic) → questionnaire. For each case: record → pre-commitment (working diagnosis, plan, confidence) → the Floor (accept / amend / reject each contribution, file Motions; in triadic mode a scripted simulated patient who can be questioned and files Motions, while the Patient Advocate withdraws once the patient speaks) → final plan and confidence → debrief.
+- `/study/admin`: researcher console. Create participant links (block-randomised sequence; per-case static or live opening Floor; pre-filled or blank final-plan box), export all data as JSON, withdraw a participant, delete incomplete sessions.
+
+Server environment:
+
+```bash
+OPENAI_API_KEY=... ANTHROPIC_API_KEY=...
+STUDY_ADMIN_TOKEN=...            # enables /study/admin; unset = console disabled
+STUDY_DATA_DIR=./study-data      # per-participant JSON, JSONL event log, resume snapshot
+STUDY_LIVE_EFFORT=medium         # reasoning effort for live panel calls
+STUDY_PATIENT_PROVIDER=anthropic # simulated patient provider
+```
+
+Live panel calls use a per-participant random 50/50 split of archetypes across OpenAI and Anthropic. Static opening Floors are pre-generated with Claude Opus and must be read and vetted by the CI (set `"vetted": true` in `server/study/floors/<case>.json`):
+
+```bash
+node --experimental-strip-types scripts/generate-static-floors.ts [caseId] [--force]
+```
+
+Cases, hidden patient scripts and reference plans live server-side in `server/study/cases.ts` and are never sent to the browser before the debrief. Analysis tables from an export:
+
+```bash
+node --experimental-strip-types scripts/study-metrics.ts quorum-study-export.json out/
+```
+
+No participant identifiers are collected on the platform; participants are known by ID only (`T01…` pilot, `P01…` study).
+
 ## Working Flow
 
 1. Choose Clinical or Thinking mode.

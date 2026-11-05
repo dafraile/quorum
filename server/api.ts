@@ -9,6 +9,7 @@ import {
   type ClerkRequest,
 } from "./prompts.ts";
 import { ProviderError, callStructured, isProviderId, providerStatus } from "./providers/index.ts";
+import { studyRoutes } from "./study/api.ts";
 
 export type ApiHandler = (req: IncomingMessage, res: ServerResponse) => Promise<void> | void;
 
@@ -142,4 +143,5 @@ export const apiRoutes: Record<string, ApiHandler> = {
   "/api/runtime": handleRuntime,
   "/api/agent": handleAgent,
   "/api/clerk": handleClerk,
+  ...studyRoutes,
 };

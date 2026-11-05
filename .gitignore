@@ -6,3 +6,4 @@ dist
 *.tsbuildinfo
 artifacts/generated/
 dist-server
+study-data

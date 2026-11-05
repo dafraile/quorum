@@ -14,6 +14,7 @@ export type AgentRequest = {
   model?: string;
   reasoning?: "low" | "medium" | "high";
   evidenceMode?: boolean;
+  wordLimit?: number;
 };
 
 export type ClerkRequest = {
@@ -140,7 +141,7 @@ Your archetype:
 Role-specific rules:
 ${roleRules}
 
-Keep answer under 120 words unless evidence citations are essential.
+Keep answer under ${body.wordLimit ?? 120} words unless evidence citations are essential.
 Make one or two concrete points visible on the case record.
 
 Motion: ${body.motion}

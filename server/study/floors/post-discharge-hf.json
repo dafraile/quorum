@@ -1,0 +1,122 @@
+{
+  "caseId": "post-discharge-hf",
+  "generatedAt": "2026-11-05T03:35:35.460Z",
+  "provider": "anthropic",
+  "model": "claude-opus-5-5",
+  "effort": "high",
+  "vetted": false,
+  "contributions": {
+    "dyadic": {
+      "intern": {
+        "answer": "Foundational question: was 82.0 kg ever his 'dry weight,' or just his weight on discharge day? He is now 78.6 kg, 3.4 kg lighter, with BP 104/62, dizziness and confusion. The record suggests over-diuresis, though that remains an inference. The one-week UEC was never done, so we don't know his potassium, sodium or creatinine. At discharge K was already 5.1 and creatinine 148, and he takes spironolactone, ramipril, empagliflozin and metformin. Same-day bloods and an ECG seem essential.",
+        "keyPoints": [
+          "Weight 78.6 kg is 3.4 kg below discharge weight and 8.9 kg below admission weight, so further fluid loss is likely.",
+          "BP 104/62 with dizziness and confusion fits volume depletion, but no lying/standing BP was recorded.",
+          "The discharge UEC was never done, so his electrolytes and kidney function are unknown.",
+          "K 5.1 at discharge on spironolactone + ramipril + CKD 3b raises hyperkalaemia and AKI risk."
+        ]
+      },
+      "oldNurse": {
+        "answer": "He's dropped another 3.4 kg since discharge (82.0 → 78.6) with BP 104/62. That looks like a man still being diuresed as if he's wet, and he probably isn't any more. The 1-week UEC, the one thing meant to catch this, never happened. K was already 5.1 on spironolactone plus ramipril in CKD 3b. I'd want bloods today, not next week. I'd also check what's actually in the dosette and how much he's really drinking on that 1.5 L limit.",
+        "keyPoints": [
+          "Weight down 3.4 kg since discharge with soft BP: likely past his dry weight",
+          "Repeat UEC requested at discharge was never done; K 5.1 and eGFR 38 last time",
+          "Four BP/renal-active drugs plus tamsulosin; dizzy and on apixaban, so he's a falls risk",
+          "Muddled could be sodium, potassium, kidneys, or low perfusion; bloods will tell"
+        ]
+      },
+      "biblioRat": {
+        "answer": "The record points toward possible over-diuresis. Weight is 78.6 kg, 3.4 kg below the 82.0 kg discharge weight. BP is 104/62 and there is new dizziness and intermittent confusion, all on doubled furosemide plus a new SGLT2 inhibitor and MRA. The 1-week UEC is overdue. Spironolactone, ramipril, CKD 3b and a discharge K of 5.1 are a recognised hyperkalaemia combination. Same-day UEC and ECG should guide the next step; withholding medicines blind should wait for those results.",
+        "keyPoints": [
+          "3.4 kg below discharge weight, BP 104/62: volume depletion is plausible, not proven",
+          "Overdue post-discharge UEC: AKI, hyperkalaemia and hyponatraemia are unexcluded",
+          "MRA + ACEi + eGFR 38 + K 5.1 is a documented hyperkalaemia risk profile",
+          "Confusion has a broad differential: hypoperfusion, electrolytes, delirium, bleeding on apixaban"
+        ]
+      },
+      "contrarian": {
+        "answer": "Everyone will say over-diuresis: 3.4 kg below discharge weight, BP 104/62. Plausible, but what falsifies it? There is no postural BP and no UEC. Two unchecked risks: (1) Spironolactone plus ramipril on a falling eGFR with K already 5.1 means \"just hold furosemide\" could push potassium higher. (2) A normal glucose does not exclude euglycaemic ketoacidosis on empagliflozin, or metformin accumulation if he has AKI. If he is muddled, is this only hypoperfusion? If bloods cannot be done today, is home still safe?",
+        "keyPoints": [
+          "Over-diuresis is unproven: no postural BP or UEC yet.",
+          "Holding furosemide alone may worsen K on spironolactone plus ramipril.",
+          "Normal glucose does not exclude SGLT2i euglycaemic ketoacidosis.",
+          "Confusion on apixaban: was there a fall or head strike?"
+        ]
+      },
+      "patientAdvocate": {
+        "answer": "He has lost a further 3.4 kg since discharge on three new drugs and a 1.5 L fluid limit, and the blood test meant to catch this was never done. That gap belongs to the system, not to him or his wife. Today: same-day UEC with results back today, and lying/standing BP. If potassium and creatinine allow, ease the diuresis and keep him home, which is what he wants. A written target weight with clear hold rules builds his capacity. Unsupervised self-care while muddled, and falls, erode it.",
+        "keyPoints": [
+          "Weight 78.6 kg, 3.4 kg below discharge weight; BP 104/62; dizzy and muddled. Over-diuresis is likely.",
+          "Repeat UEC was never done despite spironolactone, ramipril and a discharge K of 5.1 with CKD 3b.",
+          "Home management fits his stated goals, but only if today's bloods are safe.",
+          "A written weight target and hold rules shared with his wife would build his capacity to self-manage."
+        ]
+      },
+      "oldGeezer": {
+        "answer": "I've known Mr T twelve years. This is the classic post-admission slump: five days in hospital, IV diuretics, three new tablets. Of course he's tired and a bit foggy. Weight is down to 78.6 kg, which tells me the diuretics are doing their job and he's keeping the fluid off. BP 104/62 is perfectly acceptable for a HFrEF heart at 77; a lowish pressure is the price of good therapy. The dizziness sounds postural, probably the tamsulosin at night. Get the overdue UEC done, keep the regimen steady, and let cardiology fine-tune in six weeks.",
+        "keyPoints": [
+          "Tiredness and muddle fit post-hospital deconditioning after a 5-day admission",
+          "Weight 78.6 kg, below the 82.0 kg discharge weight, read as successful decongestion",
+          "BP 104/62 accepted as expected on optimised HFrEF therapy",
+          "Complete the overdue UEC; avoid changing the regimen before the cardiology review"
+        ]
+      }
+    },
+    "triadic": {
+      "intern": {
+        "answer": "My basic question: what weight is Mr T meant to be? He left hospital at 82.0 kg and is 78.6 kg today, 3.4 kg lighter, with BP 104/62 and dizziness. That could mean he's 'too dry' from the stronger water tablets, but that's an assumption until checked. Were the same scales used? Also, the kidney and potassium blood test due at one week hasn't been done. With spironolactone, ramipril and existing kidney disease, should that test happen today rather than next week?",
+        "keyPoints": [
+          "Weight down 3.4 kg since discharge (82.0 to 78.6 kg); BP 104/62 with dizziness and intermittent muddling.",
+          "The 1-week kidney and potassium test (UEC) is overdue; the last K was 5.1 and creatinine 148.",
+          "Known: weight, BP, symptoms. Assumed: same scales, pills taken exactly as listed, no target weight set.",
+          "Several medicines can lower BP or raise potassium, and some depend on kidney function."
+        ]
+      },
+      "oldNurse": {
+        "answer": "The scales stand out to me. Mr T has lost about 3.4 kg since discharge, on top of the 5.5 kg lost in hospital, and his BP is lower than I'd expect. That pattern often means the new, stronger water tablets are drying him out. The one-week kidney and potassium blood test never happened, so nobody has checked. I'd want that blood test today, not next week. I'd also check what's actually in the pill box at home: old and new furosemide tablets together are a common mix-up.",
+        "keyPoints": [
+          "Weight 78.6 kg, 3.4 kg below discharge weight in 10 days.",
+          "BP 104/62 with dizziness and intermittent muddling.",
+          "The 1-week kidney and potassium blood test was missed; the last K was 5.1 and creatinine was rising.",
+          "Four kidney- and potassium-affecting drugs started or increased together."
+        ]
+      },
+      "biblioRat": {
+        "answer": "The record shows a measurable signal. Mr T weighs 78.6 kg today, 3.4 kg below his discharge weight. His BP is 104/62. Since hospital he takes a doubled furosemide dose, plus newly started spironolactone and empagliflozin, alongside ramipril, with CKD 3b. The 1-week kidney and potassium check is overdue. Australian heart failure guidance advises early kidney and electrolyte monitoring after such changes. Same-day bloods, an ECG and postural BP would show whether this is over-drying, a potassium or sodium problem, or something else.",
+        "keyPoints": [
+          "Weight 78.6 kg today: 3.4 kg below discharge and 8.9 kg below admission, with BP 104/62.",
+          "The 1-week UEC is overdue. At discharge K was 5.1, Na 134 and eGFR 38 (down from 44).",
+          "Three potassium- or volume-affecting drugs were added or doubled on top of ramipril, in CKD 3b.",
+          "Bloods and an ECG, not symptoms alone, should decide whether today stays in the clinic or moves to hospital."
+        ]
+      },
+      "contrarian": {
+        "answer": "The obvious story is that he is now too dry: weight is 3.4 kg below discharge, BP is 104/62, and he is on three fluid-shifting drugs. Before accepting that, what would prove it wrong? Today's bloods are the test that matters, and they are ten days overdue. A normal fingerprick glucose (6.4) does not rule out ketone build-up linked to empagliflozin when someone is dehydrated. And because he is muddled while on apixaban, has he had any fall or knock to the head?",
+        "keyPoints": [
+          "Over-diuresis fits, but it has not been tested: the UEC due at 1 week was never done.",
+          "A normal glucose does not exclude euglycaemic ketoacidosis on empagliflozin, especially when he is dry.",
+          "Muddled while on apixaban: ask about falls or head injury (risk of subdural bleed).",
+          "Check what he actually takes at home. Old and new furosemide packs may both be in use."
+        ]
+      },
+      "patientAdvocate": {
+        "answer": "Mr T came home lighter than he left: 78.6 kg today, 3.4 kg below his discharge weight, with BP 104/62. To me, his tiredness, dizziness and muddle fit a plan that may have kept drying him out after the fluid was gone. The one-week kidney and potassium check never happened. That gap belongs to the system, not to him or his wife. Today: same-day bloods, so staying home is a genuinely safe choice. A daily-weight target with a written plan his wife can act on would build his capacity.",
+        "keyPoints": [
+          "He weighs 3.4 kg less than at discharge, with low-normal BP and new dizziness and muddle.",
+          "The one-week kidney and potassium blood test was missed. This is a system gap, not the family's failure.",
+          "He values independence and avoiding hospital. Same-day results are what make a home plan safe.",
+          "Daily weights with a clear 'what to do if' plan, which his wife can use, build his self-management."
+        ]
+      },
+      "oldGeezer": {
+        "answer": "Mr T, this is a very familiar picture after a heart failure admission. Hospital stays take it out of anyone, and at 77 tiredness and the odd muddled moment are common for a few weeks afterwards. Your weight is down to 78.6 kg, which tells me the water tablets are doing their job, and a BP of 104/62 is quite acceptable on heart medicines. I'd keep the regime the hospital set, get the routine kidney blood test done this week, and let cardiology fine-tune things at clinic.",
+        "keyPoints": [
+          "Weight 78.6 kg, down from 82.0 kg at discharge: reads as diuretics working",
+          "BP 104/62, HR 68, afebrile: reads as acceptable on HF therapy",
+          "Fatigue and intermittent muddle read as typical post-discharge recovery at 77",
+          "Repeat UEC still outstanding: book in the routine slot this week"
+        ]
+      }
+    }
+  }
+}

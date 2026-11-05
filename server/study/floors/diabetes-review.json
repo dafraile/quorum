@@ -1,0 +1,122 @@
+{
+  "caseId": "diabetes-review",
+  "generatedAt": "2026-11-05T03:38:17.252Z",
+  "provider": "anthropic",
+  "model": "claude-opus-5-5",
+  "effort": "high",
+  "vetted": false,
+  "contributions": {
+    "dyadic": {
+      "intern": {
+        "answer": "Before choosing a third agent, can I ask what we actually know? The 'taking as prescribed' note is six months old, and the dietitian referral wasn't attended. With shift work, are twice-daily metformin and morning gliclazide being taken on schedule? Separately, the urine ACR of 4.2 may now be above the female albuminuria threshold, up from 2.9. If a repeat confirms it, that could matter more than the HbA1c for choosing an agent, and her tablet preference might point toward an SGLT2 inhibitor.",
+        "keyPoints": [
+          "Adherence is assumed from a six-month-old self-report, not established",
+          "Shift work may conflict with twice-daily metformin and morning gliclazide timing",
+          "ACR 4.2 (from 2.9) may be new albuminuria and needs a repeat to confirm",
+          "Tablet preference is from 2023 and may need rechecking"
+        ]
+      },
+      "oldNurse": {
+        "answer": "Second time we've written 'consider adding' without checking why it's climbing. Shift work, morning gliclazide and twice-daily IR metformin rarely fit irregular meals. She may be skipping doses or hiding hypos. The unattended dietitian referral fits the same logistics problem. Her ACR has crept past threshold, and she prefers tablets, which narrows the choice quietly. Her PHQ-9 is eleven months old, so a rising HbA1c could be low mood. Ask how she actually takes them before adding a fourth daily tablet.",
+        "keyPoints": [
+          "Shift work vs fixed-time dosing: adherence and hidden hypos unchecked",
+          "Dietitian referral not attended, a logistics signal",
+          "ACR 2.9 → 4.2 and a tablet preference shape the add-on choice",
+          "PHQ-9 overdue (11 months), so mood may be driving the rise"
+        ]
+      },
+      "biblioRat": {
+        "answer": "Two record details anchor the evidence. First, urine ACR 4.2 mg/mmol is above the Australian female threshold of ≥3.5, which suggests albuminuria if a repeat confirms it. ADS and KDIGO guidance then favour an SGLT2 inhibitor for kidney protection independent of HbA1c, and it is oral, which fits her preference. Second, at HbA1c 9.1% an SGLT2i alone may lower it only about 0.5–0.8%. A GLP-1 RA has greater glycaemic and weight effect, so her injection preference from 2023 is worth revisiting rather than assuming.",
+        "keyPoints": [
+          "ACR 4.2 mg/mmol is above the female albuminuria threshold (≥3.5). Repeat to confirm persistence.",
+          "Confirmed albuminuria with eGFR >90 points guidance toward an SGLT2i for organ protection, and it is oral.",
+          "SGLT2i lowers HbA1c by about 0.5–0.8%, so it may not reach target from 9.1%. A GLP-1 RA lowers it more and helps with weight.",
+          "Shift work raises hypoglycaemia risk on gliclazide and DKA risk on SGLT2i when fasting. Sick-day counselling is needed."
+        ]
+      },
+      "contrarian": {
+        "answer": "The live assumption is that this is drug failure needing a third agent. What would falsify that? HbA1c has risen steadily since gliclazide was added, while her weight stayed flat, and nobody has verified that she takes her tablets. She does shift work, missed the dietitian, and her depression has not been screened for 11 months. A third untaken drug changes nothing. If she is taking them, a steady rise without weight gain raises the question of insulin deficiency. That matters before starting an SGLT2 inhibitor, given euglycaemic DKA risk with irregular shift-work eating.",
+        "keyPoints": [
+          "HbA1c has risen 7.4→9.1% despite added gliclazide, with stable weight: is this failure, non-adherence, or insulin deficiency?",
+          "Adherence was self-reported only; refill data has not been checked.",
+          "Depression was last screened 11 months ago; the dietitian referral was not attended.",
+          "An SGLT2 inhibitor in a possibly insulin-deficient shift worker carries euglycaemic DKA risk."
+        ]
+      },
+      "patientAdvocate": {
+        "answer": "Before adding anything, ask Ms L why she thinks it's slipping. She is a shift worker who never attended the dietitian, and her mood was last screened eleven months ago. A once-daily oral SGLT2 inhibitor respects her stated preference for tablets and her ACR trend, and builds her capacity. Repeating an unattended referral or increasing the gliclazide does the opposite: the first adds burden she can't reach, and the second raises hypoglycaemia risk with irregular shifts. Her 2023 injection preference is worth revisiting with her, not assuming.",
+        "keyPoints": [
+          "Ask her view first: why she thinks control is slipping and what she wants",
+          "An oral SGLT2i fits her tablet preference and rising ACR",
+          "Uptitrating gliclazide adds hypoglycaemia risk with shift work",
+          "The dietitian referral failed on access, not motivation; redesign it rather than repeat it"
+        ]
+      },
+      "oldGeezer": {
+        "answer": "This is ordinary progression of type 2 diabetes. She's only on gliclazide MR 60 mg, so there's plenty of headroom. I'd take it to 120 mg mane, re-refer to the dietitian, reinforce the sugar message and recheck HbA1c in three months. It's a tablet, which she prefers, and she knows the drug. eGFR is excellent, BP is near enough, and an ACR of 4.2 is borderline. If she's still well above target after a proper trial at full dose, then we add one of the newer agents.",
+        "keyPoints": [
+          "Gliclazide MR is at half its maximum dose (60 of 120 mg), so titrate before adding a new class.",
+          "Tablet preference on record supports staying with familiar oral agents.",
+          "Renal function is excellent (eGFR >90); ACR 4.2 is treated here as borderline.",
+          "Recheck HbA1c in 3 months before escalating further."
+        ]
+      }
+    },
+    "triadic": {
+      "intern": {
+        "answer": "Before choosing the next medicine, can I ask the basic question: do we know why her sugar levels are rising? The 'taking as prescribed' note is six months old and was her own report. The dietitian visit didn't happen, maybe because of shift work, and her mood hasn't been checked in 11 months. If she is taking her medicines, an SGLT2 inhibitor fits what's on record. It's a tablet, and her urine albumin has crept up (2.9 → 4.2), so kidney protection may matter. I'd want Ms L's own account first.",
+        "keyPoints": [
+          "Known: HbA1c is rising steadily (7.4 → 8.2 → 9.1) while her weight is stable.",
+          "Assumed: that she takes her medicines as prescribed. This was self-reported six months ago and hasn't been rechecked.",
+          "Urine ACR rose from 2.9 to 4.2 mg/mmol, which may favour a medicine that also protects the kidneys.",
+          "She prefers tablets, and shift work makes appointments hard. Both shape which plan is realistic."
+        ]
+      },
+      "oldNurse": {
+        "answer": "Before adding a third medicine, I'd gently ask how the current two fit her shifts. Twice-daily metformin and morning gliclazide are hard to time on rotating nights: doses get missed, or she risks a low during a night shift. She also didn't attend the dietitian, likely for the same reason. Her mood check is nearly a year old. Her urine albumin has crept up, which is worth weighing when choosing the next medicine, especially since tablets suit her.",
+        "keyPoints": [
+          "The dosing schedule may not fit her shift work. Check for missed doses and lows on night shifts before assuming the medicines have failed.",
+          "The dietitian referral wasn't attended, probably due to logistics rather than lack of interest.",
+          "Her PHQ-9 is 11 months old. Mood can quietly drive rising sugars.",
+          "Urine ACR rose from 2.9 to 4.2, which may help guide the choice of next medicine."
+        ]
+      },
+      "biblioRat": {
+        "answer": "The detail that most shapes this decision is the urine ACR. Australian thresholds define raised albumin in women as >3.5 mg/mmol, so her 4.2 (up from 2.9) may be early kidney involvement. It needs confirming: two of three samples over 3–6 months. If confirmed, the ADS algorithm and KDIGO 2022 favour an SGLT2 inhibitor for kidney protection beyond glucose-lowering. It is also a tablet, which fits her stated preference. One limit: an SGLT2 inhibitor typically lowers HbA1c by about 0.5–0.8%, so 9.1% may still remain above target.",
+        "keyPoints": [
+          "ACR 4.2 mg/mmol exceeds the female albuminuria threshold (>3.5) but is unconfirmed (1 of 3 samples needed)",
+          "Confirmed albuminuria makes an SGLT2 inhibitor the evidence-favoured add-on (ADS, KDIGO 2022)",
+          "An SGLT2 inhibitor is oral, in line with her recorded preference; expected HbA1c fall is ~0.5–0.8%",
+          "With BMI 34 and HbA1c 9.1%, GLP-1 RA or triple therapy remains on the table if target is not reached"
+        ]
+      },
+      "contrarian": {
+        "answer": "The emerging plan, adding an SGLT2 inhibitor, assumes Ms L's current tablets are being taken and have stopped working. What tests that? HbA1c climbed steadily even after gliclazide was added, while her weight stayed flat. On rotating shifts, when does she actually take each tablet? Has she skipped gliclazide to avoid lows, or metformin for stomach upset? Her depression score is eleven months old. If her tablet-taking is solid, the opposite question matters: could this be slower-onset autoimmune diabetes? Either answer changes the next step.",
+        "keyPoints": [
+          "'Taking as prescribed' is self-report and has never been tested against her shift pattern.",
+          "HbA1c rose 7.4 → 9.1% despite gliclazide, with stable weight. This is either a barrier problem or a phenotype question.",
+          "PHQ-9 is 11 months old, and low mood can quietly erode self-management.",
+          "A new tablet may fail for the same unexamined reason."
+        ]
+      },
+      "patientAdvocate": {
+        "answer": "Ms L's last plan depended on a dietitian appointment she didn't attend, and the record already notes that shift work makes appointments hard. That suggests the plan didn't fit her life, not that she lacked motivation. A once-daily tablet matches her recorded preference and builds her capacity; another clinic-based referral probably won't. Gliclazide with irregular shift meals may also be costing her through hypos or defensive snacking. Before deciding, ask about her shifts, meals, mood, and cost, and whether she still prefers tablets.",
+        "keyPoints": [
+          "The dietitian referral didn't happen; shift work is already on record as a barrier, so this looks like a plan-fit problem.",
+          "Her recorded preference (2023) is tablets over injections. Confirm it still holds rather than assume.",
+          "Gliclazide and irregular shift meals may be a hidden burden (hypoglycaemia, eating to prevent lows).",
+          "Mood was last screened 11 months ago. A rising HbA1c can reflect life strain, not just pharmacology."
+        ]
+      },
+      "oldGeezer": {
+        "answer": "Ms L, this is a common pattern a few years into diabetes and nothing to be alarmed about. The simplest step uses what you already take: increase gliclazide MR from 60 mg to 120 mg mane. It is a tablet, which you prefer, and it is familiar. Your weight is stable and your kidneys are working well (eGFR >90), so I would leave metformin unchanged. Re-refer to the dietitian, reinforce cutting down on sugar, and repeat HbA1c in three months before adding anything new.",
+        "keyPoints": [
+          "Next step: increase gliclazide MR from 60 mg to 120 mg mane, staying with the current regimen",
+          "Keeps tablet-only treatment, in line with her recorded preference",
+          "eGFR >90 and stable weight are read as reassuring, so metformin stays unchanged",
+          "Re-refer to the dietitian and recheck HbA1c in 3 months before escalating further"
+        ]
+      }
+    }
+  }
+}

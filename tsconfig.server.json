@@ -12,5 +12,5 @@
     "noEmit": true,
     "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.server.tsbuildinfo"
   },
-  "include": ["server", "vite.config.ts"]
+  "include": ["server", "shared", "scripts", "vite.config.ts"]
 }
