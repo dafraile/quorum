@@ -30,7 +30,7 @@ export const studyAgents: StudyAgent[] = [
       "Do not pretend expertise; expose ambiguity in simple language.",
     ],
     accent: "#2f7f7b",
-    art: "/generated/archetype-intern.png",
+    art: "/cards/intern.jpg",
   },
   {
     id: "oldNurse",
@@ -44,7 +44,7 @@ export const studyAgents: StudyAgent[] = [
       "Prefer grounded observations over textbook lists.",
     ],
     accent: "#9b5b36",
-    art: "/generated/archetype-nurse.png",
+    art: "/cards/nurse.jpg",
   },
   {
     id: "biblioRat",
@@ -58,7 +58,7 @@ export const studyAgents: StudyAgent[] = [
       "Name uncertainty, test limitations, and what evidence would shift the assessment.",
     ],
     accent: "#a88738",
-    art: "/generated/archetype-biblio-rat.png",
+    art: "/cards/biblio-rat.jpg",
   },
   {
     id: "contrarian",
@@ -72,7 +72,7 @@ export const studyAgents: StudyAgent[] = [
       "Prefer one precise objection over a broad alternative plan.",
     ],
     accent: "#8f2f2f",
-    art: "/generated/archetype-contrarian.png",
+    art: "/cards/contrarian.jpg",
   },
   {
     id: "patientAdvocate",
@@ -87,7 +87,7 @@ export const studyAgents: StudyAgent[] = [
       "Do not dismiss medical risk; weigh it against patient burden and informed choice.",
     ],
     accent: "#476d45",
-    art: "/generated/archetype-advocate.png",
+    art: "/cards/advocate.jpg",
   },
   {
     id: "oldGeezer",
@@ -104,7 +104,7 @@ export const studyAgents: StudyAgent[] = [
       "Never step out of character to warn the Chair or correct yourself; the platform labels you. Use the safety override only for a genuine emergency visible in the record, never because someone questioned you.",
     ],
     accent: "#6f1d1b",
-    art: "/generated/archetype-old-geezer.png",
+    art: "/cards/old-geezer.jpg",
     negative: true,
   },
 ];
@@ -113,6 +113,7 @@ export const panelAgentIds: StudyAgentId[] = ["intern", "oldNurse", "biblioRat",
 export const negativeAgentId: StudyAgentId = "oldGeezer";
 export const allStudyAgentIds: StudyAgentId[] = [...panelAgentIds, negativeAgentId];
 export const negativePanelLabel = "Watch yourself agreeing with this";
+export const cardBackArt = "/cards/card-back.jpg";
 
 export const isStudyAgentId = (value: unknown): value is StudyAgentId =>
   typeof value === "string" && (allStudyAgentIds as string[]).includes(value);

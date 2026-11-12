@@ -1,48 +1,94 @@
-import { negativeAgentId, panelAgentIds, studyAgentById } from "../../shared/studyRoster";
-import type { AgentKey, SessionPayload, Verdict } from "../../shared/studyTypes";
+import { allStudyAgentIds, studyAgentById } from "../../shared/studyRoster";
+import type {
+  AgentKey,
+  Candidate,
+  DebateStance,
+  FloorSource,
+  ProceedingLine,
+  Round,
+  SessionPayload,
+  Verdict,
+} from "../../shared/studyTypes";
 
-export type FloorItemKind = "opening" | "motion-response" | "patient-motion";
+/** Questions (to one panel member or the whole Floor) the Chair may ask per round. Patient questions are free. */
+export const roundBudget: Record<1 | 2, number> = { 1: 5, 2: 3 };
 
-export type Ruling = { verdict: Verdict; amendedText?: string; at: string };
+export const roundNames: Record<Round, string> = { 1: "Consultations", 2: "Debate", 3: "Synthesis" };
 
-export type FloorItem = {
-  id: string;
-  kind: FloorItemKind;
-  agentId?: AgentKey;
-  motionId?: string;
-  patientMotionId?: string;
-  text: string;
+export type Seat = AgentKey | "patient" | "floor";
+
+export type Opening = {
+  agentId: AgentKey;
+  answer: string;
+  keyPoints: string[];
+  hook: string;
+  source: FloorSource;
   status: "loading" | "ready" | "error";
   error?: string;
-  source: "static" | "live" | "script";
-  ruling?: Ruling;
-  createdAt: string;
+  /** Hook style: the Chair turned to this card to hear it out. */
+  heardAt?: string;
 };
 
-export type ChairMotion = {
+export type LineKind =
+  | "question" // Chair to one panel member
+  | "motion" // Chair to the whole Floor
+  | "reply" // a panel member answering the Chair or a Motion
+  | "hook-reply" // a panel member making its point after its hook
+  | "patient-motion" // the patient raising something on the Floor
+  | "patient-question" // Chair to the patient
+  | "patient-reply"
+  | "debate"; // a panel member's round-2 statement
+
+export type Line = {
   id: string;
+  round: Round;
+  speaker: AgentKey | "chair" | "patient";
+  to?: AgentKey | "floor" | "patient";
+  kind: LineKind;
+  /** Groups a Motion (or a patient Motion put to the Floor) with its replies. */
+  motionId?: string;
   text: string;
-  target: AgentKey | "floor";
-  targets: AgentKey[];
-  /** A patient's Motion the Chair put to the panel is recorded as filedBy "patient". */
-  filedBy: "chair" | "patient";
+  status: "streaming" | "done" | "error";
+  error?: string;
+  stances?: DebateStance[];
   at: string;
 };
 
-export type ChatTurn = { id: string; role: "chair" | "patient"; text: string; at: string; status?: "loading" | "error" };
+export type Pin = { id: string; sourceId: string; agentId: AgentKey; quote: string; round: Round; at: string };
 
-export type CasePhase = "record" | "floor" | "final" | "debrief";
+export type Ruling = { verdict: Verdict; amendedText?: string; via: "chat" | "direct"; at: string };
+
+export type CandidateState = Candidate & {
+  ruling?: Ruling;
+  proposed?: { verdict: Verdict; amendedText: string };
+};
+
+export type ClerkTurn = { id: string; speaker: "chair" | "clerk"; text: string; status?: "loading" | "error"; at: string };
+
+export type CasePhase = "record" | "chamber" | "final" | "debrief";
 
 export type CaseState = {
   phase: CasePhase;
+  round: Round;
   startedAt: string;
   precommit?: { diagnosis: string; plan: string; confidence: number; at: string };
   floorOpenedAt?: string;
-  items: FloorItem[];
-  motions: ChairMotion[];
-  chat: ChatTurn[];
+  roundStartedAt: Partial<Record<Round, string>>;
+  openings: Partial<Record<AgentKey, Opening>>;
+  lines: Line[];
+  pins: Pin[];
+  focus: Seat;
+  questionsUsed: Record<1 | 2, number>;
   firedPatientMotions: string[];
+  /** A patient Motion waiting for the Chair: put it to the Floor or note it. */
+  pendingPatientMotion?: { lineId: string; text: string };
   advocateWithdrawnAt?: string;
+  debateStatus: "idle" | "loading" | "ready";
+  candidates: CandidateState[];
+  candidatesStatus: "idle" | "loading" | "ready" | "error";
+  candidatesError?: string;
+  clerk: ClerkTurn[];
+  minutesSealedAt?: string;
   final?: {
     diagnosis: string;
     plan: string;
@@ -57,7 +103,7 @@ export type CaseState = {
 export type StudyStep = "welcome" | "consent" | "declined" | "demographics" | "case" | "questionnaire" | "done" | "stopped";
 
 export type StudyState = {
-  version: 1;
+  version: 2;
   step: StudyStep;
   caseIndex: number;
   cases: CaseState[];
@@ -72,63 +118,126 @@ export const createId = (prefix: string) => `${prefix}-${Date.now().toString(36)
 
 export const now = () => new Date().toISOString();
 
+export const secondsSince = (iso?: string) => (iso ? Math.round((Date.now() - Date.parse(iso)) / 1000) : undefined);
+
 export const newCaseState = (): CaseState => ({
   phase: "record",
+  round: 1,
   startedAt: now(),
-  items: [],
-  motions: [],
-  chat: [],
+  roundStartedAt: {},
+  openings: {},
+  lines: [],
+  pins: [],
+  focus: "intern",
+  questionsUsed: { 1: 0, 2: 0 },
   firedPatientMotions: [],
+  debateStatus: "idle",
+  candidates: [],
+  candidatesStatus: "idle",
+  clerk: [],
 });
 
-export const initialStudyState = (): StudyState => ({ version: 1, step: "welcome", caseIndex: 0, cases: [] });
+export const initialStudyState = (): StudyState => ({ version: 2, step: "welcome", caseIndex: 0, cases: [] });
 
 /** Requests in flight when the page was closed never return: surface them as retryable errors. */
 export const restoreSnapshot = (value: unknown): StudyState | null => {
-  if (!value || typeof value !== "object" || (value as StudyState).version !== 1) return null;
+  if (!value || typeof value !== "object" || (value as StudyState).version !== 2) return null;
   const state = value as StudyState;
+  const interrupted = "Interrupted when the page was reloaded.";
   return {
     ...state,
     cases: state.cases.map((item) => ({
       ...item,
-      items: item.items.map((floorItem) =>
-        floorItem.status === "loading"
-          ? { ...floorItem, status: "error", error: "Interrupted when the page was reloaded." }
-          : floorItem,
+      openings: Object.fromEntries(
+        Object.entries(item.openings).map(([id, opening]) => [
+          id,
+          opening && opening.status === "loading" ? { ...opening, status: "error", error: interrupted } : opening,
+        ]),
       ),
-      chat: item.chat.filter((turn) => turn.status !== "loading"),
+      lines: item.lines.map((line) => (line.status === "streaming" ? { ...line, status: "error", error: interrupted } : line)),
+      debateStatus: item.debateStatus === "loading" ? "ready" : item.debateStatus,
+      candidatesStatus: item.candidatesStatus === "loading" ? "error" : item.candidatesStatus,
+      candidatesError: item.candidatesStatus === "loading" ? interrupted : item.candidatesError,
+      clerk: item.clerk.filter((turn) => turn.status !== "loading"),
     })),
   };
 };
 
 export const agentName = (id: AgentKey) => studyAgentById(id).name;
 
-export const effectiveText = (item: FloorItem) =>
-  item.ruling?.verdict === "amend" && item.ruling.amendedText ? item.ruling.amendedText : item.text;
-
-export const isRuled = (item: FloorItem) => Boolean(item.ruling);
-
-/** Agents a Motion to the whole Floor goes to: the panel (minus a withdrawn Advocate) and the negative archetype. */
+/** Panel members still at the table: the Advocate withdraws once the patient speaks. */
 export const activeAgents = (caseState: CaseState): AgentKey[] =>
-  [...panelAgentIds, negativeAgentId].filter(
-    (id) => !(id === "patientAdvocate" && caseState.advocateWithdrawnAt),
-  );
+  allStudyAgentIds.filter((id) => !(id === "patientAdvocate" && caseState.advocateWithdrawnAt));
 
-export const latestAnswerFor = (caseState: CaseState, agentId: AgentKey) =>
-  [...caseState.items].reverse().find((item) => item.agentId === agentId && item.status === "ready")?.text;
+export const patientUtterances = (caseState: CaseState) =>
+  caseState.lines.filter((line) => line.speaker === "patient" && line.status === "done").map((line) => line.text);
 
-export const patientUtterances = (caseState: CaseState) => [
-  ...caseState.items.filter((item) => item.kind === "patient-motion").map((item) => item.text),
-  ...caseState.chat.filter((turn) => turn.role === "patient" && !turn.status).map((turn) => turn.text),
-];
+export const questionsLeft = (caseState: CaseState) =>
+  caseState.round === 3 ? 0 : roundBudget[caseState.round] - caseState.questionsUsed[caseState.round];
 
-export const rulingCounts = (caseState: CaseState) => {
-  const ruled = caseState.items.filter(isRuled);
-  return {
-    ruled: ruled.length,
-    accept: ruled.filter((item) => item.ruling?.verdict === "accept").length,
-    amend: ruled.filter((item) => item.ruling?.verdict === "amend").length,
-    reject: ruled.filter((item) => item.ruling?.verdict === "reject").length,
-    unruled: caseState.items.filter((item) => item.status === "ready" && !item.ruling).length,
-  };
+/** What a panel member has said at the table (hook-style openings count only once heard, otherwise the hook). */
+export const openingSaid = (opening: Opening | undefined, style: "paragraph" | "hook") => {
+  if (!opening || opening.status !== "ready") return "";
+  return style === "hook" ? opening.hook || opening.answer : opening.answer;
 };
+
+/** The proceedings in the order they happened, as sent to the debate and the Clerk. */
+export const proceedingsOf = (caseState: CaseState, style: "paragraph" | "hook", upToRound: Round): ProceedingLine[] => {
+  const openings: ProceedingLine[] = allStudyAgentIds.flatMap((agentId) => {
+    const text = openingSaid(caseState.openings[agentId], style);
+    return text ? [{ id: `open-${agentId}`, round: 1 as Round, speaker: agentId, text }] : [];
+  });
+  const lines = caseState.lines
+    .filter((line) => line.status === "done" && line.round <= upToRound && line.text)
+    .map<ProceedingLine>((line) => ({
+      id: line.id,
+      round: line.round,
+      speaker: line.speaker,
+      to: line.speaker === "chair" ? line.to : undefined,
+      text: line.kind === "patient-motion" ? `(raises on the Floor) ${line.text}` : line.text,
+    }));
+  return [...openings, ...lines];
+};
+
+/** One panel member's own conversation with the Chair, for continuity in chat. */
+export const threadFor = (caseState: CaseState, agentId: AgentKey) => {
+  const motionIdsAnswered = new Set(
+    caseState.lines.filter((line) => line.speaker === agentId && line.motionId).map((line) => line.motionId),
+  );
+  return caseState.lines
+    .filter((line) => line.status === "done")
+    .flatMap((line) => {
+      if (line.speaker === agentId && line.kind !== "debate") return [{ speaker: "agent" as const, text: line.text }];
+      if (line.speaker === "chair" && line.to === agentId) return [{ speaker: "chair" as const, text: line.text }];
+      if (line.speaker === "chair" && line.to === "floor" && motionIdsAnswered.has(line.motionId))
+        return [{ speaker: "chair" as const, text: line.text, toFloor: true }];
+      if (line.kind === "patient-motion" && motionIdsAnswered.has(line.id))
+        return [{ speaker: "chair" as const, text: `(The patient's point, put to the Floor) ${line.text}`, toFloor: true }];
+      return [];
+    })
+    .slice(-16);
+};
+
+export const debateLineFor = (caseState: CaseState, agentId: AgentKey) =>
+  caseState.lines.find((line) => line.kind === "debate" && line.speaker === agentId);
+
+export const isSpeaking = (caseState: CaseState, agentId: AgentKey) =>
+  caseState.lines.some((line) => line.speaker === agentId && line.status === "streaming") ||
+  caseState.openings[agentId]?.status === "loading";
+
+export const verdictLabels: Record<Verdict, string> = {
+  accept: "Carried forward",
+  amend: "Carried in part",
+  reject: "Left out",
+};
+
+export const minutesOf = (caseState: CaseState) =>
+  caseState.candidates
+    .filter((candidate) => candidate.ruling && candidate.ruling.verdict !== "reject")
+    .map((candidate) => ({
+      id: candidate.id,
+      agentIds: candidate.agentIds,
+      text:
+        candidate.ruling?.verdict === "amend" && candidate.ruling.amendedText ? candidate.ruling.amendedText : candidate.quote,
+      verdict: candidate.ruling!.verdict,
+    }));

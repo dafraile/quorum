@@ -1,4 +1,14 @@
-import type { AgentKey, Contribution, Debrief, SessionPayload } from "../../shared/studyTypes";
+import type {
+  AgentKey,
+  Candidate,
+  ClerkProposal,
+  Contribution,
+  DebateContribution,
+  Debrief,
+  ProceedingLine,
+  Round,
+  SessionPayload,
+} from "../../shared/studyTypes";
 
 export const studyToken = () => new URLSearchParams(window.location.search).get("t") ?? "";
 
@@ -37,14 +47,94 @@ export const fetchSession = () => post<SessionPayload>("/api/study/session", {})
 export const fetchStaticFloor = (caseIndex: number) =>
   post<{ contributions: Contribution[]; vetted: boolean }>("/api/study/static-floor", { caseIndex });
 
-export const fetchContribution = (input: {
+export const fetchContribution = (input: { caseIndex: number; agentId: AgentKey; requestId: string }) =>
+  post<Contribution>("/api/study/contribution", input);
+
+export type ChatRequest = {
+  caseIndex: number;
+  round: Round;
+  agentId: AgentKey;
+  kind: "question" | "motion" | "hook" | "patient-motion";
+  message: string;
+  requestId: string;
+  motionId?: string;
+  thread: Array<{ speaker: "chair" | "agent"; text: string; toFloor?: boolean }>;
+  opening?: { answer: string; hook: string };
+  proceedings?: ProceedingLine[];
+  debateStatement?: string;
+  patientUtterances?: string[];
+};
+
+/** Streams a panel member's reply. Calls onDelta with each text chunk; resolves with the full text. */
+export const streamChat = async (input: ChatRequest, onDelta: (text: string) => void, timeoutMs = 90_000) => {
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+  let text = "";
+  try {
+    const response = await fetch("/api/study/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token: studyToken(), ...input }),
+      signal: controller.signal,
+    });
+    if (!response.ok || !response.body) {
+      const payload = await response.json().catch(() => ({}));
+      throw new StudyApiError(response.status, payload.error || `Request failed (${response.status})`);
+    }
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let newline = buffer.indexOf("\n");
+      while (newline !== -1) {
+        const line = buffer.slice(0, newline).trim();
+        buffer = buffer.slice(newline + 1);
+        newline = buffer.indexOf("\n");
+        if (!line) continue;
+        const event = JSON.parse(line) as { t: string; v?: string; error?: string };
+        if (event.t === "d" && event.v) {
+          text += event.v;
+          onDelta(event.v);
+        } else if (event.t === "err") {
+          throw new StudyApiError(502, event.error || "The panel member could not answer.");
+        }
+      }
+    }
+    return text.trim();
+  } catch (error) {
+    if (error instanceof StudyApiError) throw error;
+    if (controller.signal.aborted) throw new StudyApiError(504, "The reply took too long. Ask again.");
+    throw new StudyApiError(0, "Connection problem. Check your network and ask again.");
+  } finally {
+    window.clearTimeout(timer);
+  }
+};
+
+export const fetchDebate = (input: {
   caseIndex: number;
   agentId: AgentKey;
-  requestId: string;
-  motion?: { text: string; filedBy: "chair" | "patient" };
-  previous?: string;
+  others: AgentKey[];
+  proceedings: ProceedingLine[];
+  pinned: string[];
   patientUtterances?: string[];
-}) => post<Contribution>("/api/study/contribution", input);
+  requestId: string;
+}) => post<DebateContribution>("/api/study/debate", input, 100_000);
+
+export const fetchClerkCandidates = (input: {
+  caseIndex: number;
+  proceedings: ProceedingLine[];
+  pinned: Array<{ agentId: AgentKey; quote: string }>;
+}) => post<{ candidates: Candidate[] }>("/api/study/clerk/candidates", input, 110_000);
+
+export const fetchClerkReply = (input: {
+  caseIndex: number;
+  candidates: Array<Candidate & { ruling?: string }>;
+  history: Array<{ speaker: "chair" | "clerk"; text: string }>;
+  message: string;
+}) => post<{ reply: string; proposals: ClerkProposal[] }>("/api/study/clerk/chat", input, 70_000);
 
 export const fetchPatientReply = (input: {
   caseIndex: number;
