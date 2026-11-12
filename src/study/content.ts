@@ -239,11 +239,29 @@ export const pilotPlanStartItem: ChoiceItem = {
   text: "Why?",
 };
 
+export const pilotOpeningStyleItem: ChoiceItem = {
+  id: "pilot_openingStylePreference",
+  label:
+    "In one case each panel member opened with a full paragraph; in the other they opened with a single line and you heard them out by talking. Which did you prefer?",
+  options: ["The full paragraph", "The single line and a conversation", "No preference"],
+  text: "Why?",
+};
+
 export const pilotItems: QuestionItem[] = [
   {
     id: "pilot_contributionLength",
     label: "The panel's contributions were…",
     options: ["Too short", "About right", "Too long"],
+  },
+  {
+    id: "pilot_questionBudget",
+    label: "The number of questions you could ask in each round was…",
+    options: ["Too few", "About right", "More than I needed"],
+  },
+  {
+    id: "pilot_rounds",
+    label: "Calling a debate round before the synthesis was…",
+    options: ["Not useful", "Somewhat useful", "Very useful"],
   },
   {
     id: "pilot_feedback",

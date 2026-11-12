@@ -29,6 +29,9 @@ const seatOrder = (slot: CaseSlot): Array<AgentKey | "patient"> => {
 const seatName = (seat: Seat, slot: CaseSlot) =>
   seat === "floor" ? "The Floor" : seat === "patient" ? slot.case.patientLabel : studyAgentById(seat).name;
 
+export const listNames = (names: string[]) =>
+  names.length <= 1 ? names.join("") : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+
 const shortSeatName = (seat: Seat, slot: CaseSlot) =>
   seat === "floor" ? "the Floor" : seat === "patient" ? slot.case.patientLabel : studyAgentById(seat).shortName;
 
@@ -82,10 +85,10 @@ export function Table({ slot, caseState, style, onFocus }: TableProps) {
 
   const { w, h } = size;
   const cx = w / 2;
-  const cy = h * 0.4;
+  const cy = h * 0.36;
   const rx = Math.min(w * 0.4, 460);
   const ry = Math.min(rx * 0.3, h * 0.17);
-  const baseH = Math.min(h * 0.5, 360, w * 0.42);
+  const baseH = Math.min(h * 0.47, 370, w * 0.42);
 
   const placed: Placed[] = seats.map((seat, index) => {
     const steps = seats.length;
@@ -183,8 +186,8 @@ export function Table({ slot, caseState, style, onFocus }: TableProps) {
         <small>speak to everyone</small>
       </button>
 
-      {placed.map((item) => (
-        <SeatCard key={item.seat} item={item} slot={slot} caseState={caseState} style={style} onFocus={onFocus} />
+      {placed.map((item, index) => (
+        <SeatCard key={item.seat} item={item} dealIndex={index} slot={slot} caseState={caseState} style={style} onFocus={onFocus} />
       ))}
 
       <button className="turn-button left" onClick={() => turn(-1)} aria-label="Turn the table left">
@@ -199,12 +202,14 @@ export function Table({ slot, caseState, style, onFocus }: TableProps) {
 
 function SeatCard({
   item,
+  dealIndex,
   slot,
   caseState,
   style,
   onFocus,
 }: {
   item: Placed;
+  dealIndex: number;
   slot: CaseSlot;
   caseState: CaseState;
   style: OpeningStyle;
@@ -226,7 +231,7 @@ function SeatCard({
 
   return (
     <button
-      className={`seat-card ${item.front ? "front" : ""} ${agent?.negative ? "negative" : ""} ${speaking || patientSpeaking ? "speaking" : ""} ${
+      className={`seat-card ${item.front ? "front" : ""} ${item.depth < 0.4 ? "far" : ""} ${agent?.negative ? "negative" : ""} ${speaking || patientSpeaking ? "speaking" : ""} ${
         withdrawn ? "withdrawn" : ""
       } ${isPatient ? "patient" : ""}`}
       style={
@@ -243,7 +248,7 @@ function SeatCard({
       aria-label={`${seatName(seat, slot)}${agent?.negative ? `. ${negativePanelLabel}` : ""}`}
       aria-pressed={caseState.focus === seat}
     >
-      <span className={`card-flip ${faceDown ? "down" : ""}`}>
+      <span className={`card-flip ${faceDown ? "down" : ""}`} style={{ "--deal": `${dealIndex * 120}ms` } as CSSProperties}>
         <span className="card-face front-face">
           {isPatient ? (
             <span className="patient-face">
@@ -744,7 +749,7 @@ export function Ledger({ slot, caseState, onRule, onRetry }: SynthesisProps) {
                 {candidate.agentIds.map((id) => (
                   <img key={id} src={studyAgentById(id).art} alt="" className="slip-face" />
                 ))}
-                <span>{candidate.agentIds.map((id) => studyAgentById(id).shortName).join(" and ")}</span>
+                <span>{listNames(candidate.agentIds.map((id) => studyAgentById(id).shortName))}</span>
                 {candidate.origin === "pin" && <span className="slip-pinned">your pin</span>}
                 {negative && <span className="slip-negative">{negativePanelLabel}</span>}
               </div>
@@ -792,7 +797,7 @@ export function Ledger({ slot, caseState, onRule, onRetry }: SynthesisProps) {
 function PartialPicker({ quote, onCancel, onCarry }: { quote: string; onCancel: () => void; onCarry: (words: string) => void }) {
   const [words, setWords] = useState("");
   const capture = () => {
-    const text = window.getSelection()?.toString().trim() ?? "";
+    const text = (window.getSelection()?.toString() ?? "").trim().replace(/^[“"]+|[”"]+$/g, "").trim();
     if (text && quote.includes(text)) setWords(text);
   };
   return (

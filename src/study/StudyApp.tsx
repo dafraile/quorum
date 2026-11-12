@@ -8,6 +8,7 @@ import {
   demographicItems,
   picfSections,
   pilotItems,
+  pilotOpeningStyleItem,
   pilotPlanStartItem,
   questionnaireSections,
   type QuestionItem,
@@ -72,7 +73,7 @@ export function StudyApp() {
       cases: current.cases[caseIndex] ? current.cases : [...current.cases, newCaseState()],
     }));
     const slot = session.sequence[caseIndex];
-    void logEvent("case_started", { caseId: slot.caseId, mode: slot.mode, floorSource: slot.floorSource, planStart: slot.planStart, position: caseIndex + 1 }, caseIndex);
+    void logEvent("case_started", { caseId: slot.caseId, mode: slot.mode, floorSource: slot.floorSource, planStart: slot.planStart, openingStyle: slot.openingStyle, position: caseIndex + 1 }, caseIndex);
   };
 
   const stopSession = () => {
@@ -96,9 +97,9 @@ export function StudyApp() {
           <section className="form-card narrow">
             <h1>Quorum</h1>
             <p>
-              Thank you for taking part. In this session you will chair a panel of AI agents discussing two fictional patients. Before
-              each discussion you record your own working diagnosis and plan; then you rule on what the panel says, and finish with a
-              short questionnaire. It takes about 30 minutes.
+              Thank you for taking part. You will chair a panel of AI agents around a table, discussing two fictional patients. Before
+              each discussion you record your own working diagnosis and plan. Then you talk with the panel over three rounds, decide what
+              goes into the Minutes, and finish with a short questionnaire. It takes about 30 minutes.
             </p>
             <p>Please do not type any real patient information at any point.</p>
             <button
@@ -188,7 +189,11 @@ export function StudyApp() {
     case "questionnaire": {
       const planStarts = new Set(session.sequence.map((slot) => slot.planStart));
       const extra: QuestionItem[] = session.pilot
-        ? [...(planStarts.size > 1 ? [pilotPlanStartItem] : []), ...pilotItems]
+        ? [
+            ...(planStarts.size > 1 ? [pilotPlanStartItem] : []),
+            ...(new Set(session.sequence.map((slot) => slot.openingStyle)).size > 1 ? [pilotOpeningStyleItem] : []),
+            ...pilotItems,
+          ]
         : [];
       return (
         <Shell header={header}>
@@ -255,7 +260,7 @@ function StudyHeader({
       <strong>Quorum</strong>
       <span className="study-meta">
         Participant {participantId}
-        {pilot ? " · pilot" : ""}
+        {pilot ? ", pilot" : ""}
       </span>
       {canStop &&
         (confirm ? (

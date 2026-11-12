@@ -1,27 +1,43 @@
-import { type CSSProperties, useEffect, useMemo, useRef, useState } from "react";
+import { BookOpen, X } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { negativeAgentId, studyAgentById } from "../../shared/studyRoster";
+import type { AgentKey, Debrief, Round, Verdict } from "../../shared/studyTypes";
 import {
-  negativeAgentId,
-  negativePanelLabel,
-  panelAgentIds,
-  studyAgentById,
-  studyAgents,
-} from "../../shared/studyRoster";
-import type { AgentKey, Debrief, Verdict } from "../../shared/studyTypes";
-import { StudyApiError, fetchContribution, fetchDebrief, fetchPatientReply, fetchStaticFloor, logEvent } from "./api";
+  StudyApiError,
+  fetchClerkCandidates,
+  fetchClerkReply,
+  fetchContribution,
+  fetchDebate,
+  fetchDebrief,
+  fetchPatientReply,
+  fetchStaticFloor,
+  logEvent,
+  streamChat,
+  type ChatRequest,
+} from "./api";
+import { ClerkPaper, Ledger, Paper, PinTray, Table, listNames } from "./Chamber";
 import { changeOptions, confidenceOptions } from "./content";
 import {
   activeAgents,
   createId,
-  effectiveText,
-  isRuled,
-  latestAnswerFor,
+  debateLineFor,
+  minutesOf,
   now,
   patientUtterances,
-  rulingCounts,
+  proceedingsOf,
+  questionsLeft,
+  roundBudget,
+  roundNames,
+  secondsSince,
+  threadFor,
+  verdictLabels,
+  type CandidateState,
   type CaseSlot,
   type CaseState,
-  type ChairMotion,
-  type FloorItem,
+  type Line,
+  type Opening,
+  type Pin,
+  type Seat,
 } from "./state";
 
 type CaseViewProps = {
@@ -33,226 +49,275 @@ type CaseViewProps = {
   onFinished: () => void;
 };
 
-const secondsSince = (iso?: string) => (iso ? Math.round((Date.now() - Date.parse(iso)) / 1000) : undefined);
+const patientMotionGapMs = 30_000;
 
 export function CaseView({ slot, caseIndex, caseCount, caseState, updateCase, onFinished }: CaseViewProps) {
   // Latest state for async callbacks and timers (props are stale inside closures).
   const stateRef = useRef(caseState);
   stateRef.current = caseState;
-
+  const style = slot.openingStyle ?? "paragraph";
   const log = (type: string, data?: unknown) => logEvent(type, data, caseIndex);
 
-  const patchItem = (id: string, patch: Partial<FloorItem>) =>
+  const patchLine = (id: string, patch: Partial<Line> | ((line: Line) => Partial<Line>)) =>
     updateCase((current) => ({
       ...current,
-      items: current.items.map((item) => (item.id === id ? { ...item, ...patch } : item)),
+      lines: current.lines.map((line) => (line.id === id ? { ...line, ...(typeof patch === "function" ? patch(line) : patch) } : line)),
     }));
 
-  // ------------------------------------------------------------ loading
+  const patchOpening = (agentId: AgentKey, patch: Partial<Opening>) =>
+    updateCase((current) => ({
+      ...current,
+      openings: { ...current.openings, [agentId]: { ...current.openings[agentId]!, ...patch } },
+    }));
 
-  const requestLive = async (item: FloorItem, motion?: ChairMotion) => {
-    const current = stateRef.current;
-    try {
-      const result = await fetchContribution({
-        caseIndex,
-        agentId: item.agentId!,
-        requestId: item.id,
-        motion: motion ? { text: motion.text, filedBy: motion.filedBy } : undefined,
-        previous: motion ? latestAnswerFor(current, item.agentId!) : undefined,
-        patientUtterances: slot.mode === "triadic" ? patientUtterances(current) : undefined,
-      });
-      patchItem(item.id, { text: result.answer, status: "ready", error: undefined });
-    } catch (error) {
-      patchItem(item.id, { status: "error", error: error instanceof Error ? error.message : "Request failed" });
-    }
-  };
+  // ------------------------------------------------------------ openings
 
-  const requestStatic = async (itemIds: string[]) => {
+  const loadStatic = async (only?: AgentKey) => {
     try {
       const { contributions } = await fetchStaticFloor(caseIndex);
-      const byAgent = new Map(contributions.map((item) => [item.agentId, item]));
-      updateCase((current) => ({
-        ...current,
-        items: current.items.map((item) => {
-          if (!itemIds.includes(item.id) || !item.agentId) return item;
-          const found = byAgent.get(item.agentId);
-          return found
-            ? { ...item, text: found.answer, status: "ready", error: undefined }
-            : { ...item, status: "error", error: "Missing from the prepared Floor" };
-        }),
-      }));
+      for (const item of contributions) {
+        if (only && item.agentId !== only) continue;
+        patchOpening(item.agentId, { ...item, status: "ready", error: undefined });
+      }
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Request failed";
-      updateCase((current) => ({
-        ...current,
-        items: current.items.map((item) => (itemIds.includes(item.id) ? { ...item, status: "error", error: message } : item)),
-      }));
+      const message = error instanceof Error ? error.message : "Could not load";
+      for (const agentId of only ? [only] : activeAgents(stateRef.current)) patchOpening(agentId, { status: "error", error: message });
     }
   };
 
-  const retryItem = (item: FloorItem) => {
-    patchItem(item.id, { status: "loading", error: undefined });
-    log("item_retry", { itemId: item.id, agentId: item.agentId, kind: item.kind });
-    if (item.kind === "opening" && item.source === "static") {
-      void requestStatic([item.id]);
-      return;
+  const loadLive = async (agentId: AgentKey) => {
+    try {
+      const result = await fetchContribution({ caseIndex, agentId, requestId: createId("open") });
+      patchOpening(agentId, { ...result, status: "ready", error: undefined });
+    } catch (error) {
+      patchOpening(agentId, { status: "error", error: error instanceof Error ? error.message : "Could not load" });
     }
-    const motion = item.motionId ? stateRef.current.motions.find((entry) => entry.id === item.motionId) : undefined;
-    void requestLive(item, motion);
   };
 
-  // ------------------------------------------------------------ record -> floor
+  const retryOpening = (agentId: AgentKey) => {
+    patchOpening(agentId, { status: "loading", error: undefined });
+    void (slot.floorSource === "static" ? loadStatic(agentId) : loadLive(agentId));
+  };
 
-  const openFloor = (precommit: { diagnosis: string; plan: string; confidence: number }) => {
+  const openChamber = (precommit: { diagnosis: string; plan: string; confidence: number }) => {
     const openedAt = now();
-    const items: FloorItem[] = [...panelAgentIds, negativeAgentId].map((agentId) => ({
-      id: createId("item"),
-      kind: "opening",
-      agentId,
-      text: "",
-      status: "loading",
-      source: slot.floorSource,
-      createdAt: openedAt,
-    }));
+    const openings = Object.fromEntries(
+      activeAgents(stateRef.current).map((agentId) => [
+        agentId,
+        { agentId, answer: "", keyPoints: [], hook: "", source: slot.floorSource, status: "loading" } satisfies Opening,
+      ]),
+    );
     updateCase((current) => ({
       ...current,
       precommit: { ...precommit, at: openedAt },
-      phase: "floor",
+      phase: "chamber",
+      round: 1,
       floorOpenedAt: openedAt,
-      items,
+      roundStartedAt: { 1: openedAt },
+      openings,
+      focus: "intern",
     }));
     void log("precommit_submitted", {
       ...precommit,
       confidenceLabel: confidenceOptions[precommit.confidence - 1],
       secondsOnRecord: secondsSince(caseState.startedAt),
     });
-    void log("floor_opened", { floorSource: slot.floorSource, mode: slot.mode, caseId: slot.caseId });
-
-    if (slot.floorSource === "static") {
-      void requestStatic(items.map((item) => item.id));
-    } else {
-      items.forEach((item) => void requestLive(item));
-    }
+    void log("floor_opened", { floorSource: slot.floorSource, mode: slot.mode, caseId: slot.caseId, openingStyle: style });
+    if (slot.floorSource === "static") void loadStatic();
+    else Object.keys(openings).forEach((agentId) => void loadLive(agentId as AgentKey));
   };
 
-  // ------------------------------------------------------------ floor actions
-
-  const rule = (item: FloorItem, verdict: Verdict, amendedText?: string) => {
-    updateCase((current) => ({
-      ...current,
-      items: current.items.map((entry) =>
-        entry.id === item.id ? { ...entry, ruling: { verdict, amendedText, at: now() } } : entry,
-      ),
-    }));
-    void log("ruling", {
-      itemId: item.id,
-      kind: item.kind,
-      agentId: item.agentId,
-      motionId: item.motionId,
-      patientMotionId: item.patientMotionId,
-      source: item.source,
-      verdict,
-      amendedText,
-      originalText: item.text,
-      previousVerdict: item.ruling?.verdict,
-      secondsSinceFloorOpened: secondsSince(stateRef.current.floorOpenedAt),
-    });
-  };
-
-  const fileMotion = (text: string, target: AgentKey | "floor", filedBy: "chair" | "patient" = "chair") => {
-    const current = stateRef.current;
-    const targets = target === "floor" ? activeAgents(current) : [target];
-    const motion: ChairMotion = { id: createId("motion"), text, target, targets, filedBy, at: now() };
-    const items: FloorItem[] = targets.map((agentId) => ({
-      id: createId("item"),
-      kind: "motion-response",
-      agentId,
-      motionId: motion.id,
-      text: "",
-      status: "loading",
-      source: "live",
-      createdAt: motion.at,
-    }));
-    updateCase((state) => ({ ...state, motions: [...state.motions, motion], items: [...state.items, ...items] }));
-    void log("motion_filed", { motionId: motion.id, text, target, targets, filedBy });
-    items.forEach((item) => void requestLive(item, motion));
-  };
+  // ------------------------------------------------------------ talking at the table
 
   const withdrawAdvocate = (trigger: string) => {
     if (stateRef.current.advocateWithdrawnAt) return;
     const at = now();
     stateRef.current = { ...stateRef.current, advocateWithdrawnAt: at };
-    updateCase((state) => (state.advocateWithdrawnAt ? state : { ...state, advocateWithdrawnAt: at }));
-    void log("advocate_withdrawn", { trigger });
+    updateCase((current) => (current.advocateWithdrawnAt ? current : { ...current, advocateWithdrawnAt: at }));
+    void log("advocate_withdrawn", { trigger, round: stateRef.current.round });
+  };
+
+  const chatRequest = (current: CaseState, agentId: AgentKey, kind: ChatRequest["kind"], message: string, motionId?: string): ChatRequest => {
+    const opening = current.openings[agentId];
+    return {
+      caseIndex,
+      round: current.round,
+      agentId,
+      kind,
+      message,
+      motionId,
+      requestId: createId("chat"),
+      thread: threadFor(current, agentId),
+      opening: opening?.status === "ready" ? { answer: opening.answer, hook: opening.hook } : undefined,
+      proceedings: current.round > 1 ? proceedingsOf(current, style, current.round) : undefined,
+      debateStatement: debateLineFor(current, agentId)?.text || undefined,
+      patientUtterances: slot.mode === "triadic" ? patientUtterances(current) : undefined,
+    };
+  };
+
+  const streamInto = async (lineId: string, request: ChatRequest) => {
+    patchLine(lineId, { text: "", status: "streaming", error: undefined });
+    try {
+      const text = await streamChat(request, (delta) => patchLine(lineId, (line) => ({ text: line.text + delta })));
+      patchLine(lineId, { text, status: "done" });
+    } catch (error) {
+      patchLine(lineId, { status: "error", error: error instanceof Error ? error.message : "No answer" });
+    }
+  };
+
+  const agentLine = (agentId: AgentKey, kind: Line["kind"], round: Round, motionId?: string): Line => ({
+    id: createId("line"),
+    round,
+    speaker: agentId,
+    kind,
+    motionId,
+    text: "",
+    status: "streaming",
+    at: now(),
+  });
+
+  const hearOut = (agentId: AgentKey) => {
+    const current = stateRef.current;
+    const line = agentLine(agentId, "hook-reply", 1);
+    updateCase((state) => ({
+      ...state,
+      lines: [...state.lines, line],
+      openings: { ...state.openings, [agentId]: { ...state.openings[agentId]!, heardAt: now() } },
+    }));
+    void log("hook_opened", { agentId, lineId: line.id });
+    void streamInto(line.id, chatRequest(current, agentId, "hook", ""));
   };
 
   const askPatient = async (question: string) => {
     const current = stateRef.current;
-    const chairTurn = { id: createId("chat"), role: "chair" as const, text: question, at: now() };
-    const pendingId = createId("chat");
-    updateCase((state) => ({
-      ...state,
-      chat: [...state.chat, chairTurn, { id: pendingId, role: "patient", text: "", at: now(), status: "loading" }],
-    }));
-    void log("patient_question", { question, secondsSinceFloorOpened: secondsSince(current.floorOpenedAt) });
+    const chairLine: Line = { id: createId("line"), round: current.round, speaker: "chair", to: "patient", kind: "patient-question", text: question, status: "done", at: now() };
+    const reply: Line = { id: createId("line"), round: current.round, speaker: "patient", kind: "patient-reply", text: "", status: "streaming", at: now() };
+    updateCase((state) => ({ ...state, lines: [...state.lines, chairLine, reply] }));
+    void log("patient_question", { question, round: current.round, lineId: chairLine.id, secondsSinceFloorOpened: secondsSince(current.floorOpenedAt) });
+    await answerPatient(reply.id, question);
+  };
 
-    const history = current.chat.filter((turn) => !turn.status).map(({ role, text }) => ({ role, text }));
-    const floorSummary = current.items
-      .filter((item) => item.status === "ready" && item.agentId)
-      .map((item) => `${studyAgentById(item.agentId!).shortName}: ${item.text.slice(0, 240)}`);
+  const answerPatient = async (replyId: string, question: string) => {
+    const current = stateRef.current;
+    const history = current.lines
+      .filter((line) => (line.to === "patient" || line.speaker === "patient") && line.status === "done" && line.kind !== "patient-motion")
+      .map((line) => ({ role: line.speaker === "patient" ? ("patient" as const) : ("chair" as const), text: line.text }))
+      .slice(0, -1);
+    const floorSummary = current.lines
+      .filter((line) => line.speaker !== "chair" && line.speaker !== "patient" && line.status === "done")
+      .slice(-12)
+      .map((line) => `${studyAgentById(line.speaker as AgentKey).shortName}: ${line.text.slice(0, 280)}`);
+    patchLine(replyId, { status: "streaming", error: undefined });
     try {
       const { reply } = await fetchPatientReply({ caseIndex, question, history, floorSummary });
-      updateCase((state) => ({
-        ...state,
-        chat: state.chat.map((turn) => (turn.id === pendingId ? { ...turn, text: reply, status: undefined, at: now() } : turn)),
-      }));
-      withdrawAdvocate("patient_answered");
+      patchLine(replyId, { text: reply, status: "done" });
+      withdrawAdvocate("patient_reply");
     } catch (error) {
-      updateCase((state) => ({
-        ...state,
-        chat: state.chat.map((turn) =>
-          turn.id === pendingId
-            ? { ...turn, status: "error", text: error instanceof Error ? error.message : "No answer. Please ask again." }
-            : turn,
-        ),
-      }));
+      patchLine(replyId, { status: "error", error: error instanceof Error ? error.message : "No answer" });
     }
   };
 
-  // Scripted patient Motions (triadic): fire when a ruling count or time threshold is reached.
+  const ask = (seat: Seat, text: string) => {
+    const current = stateRef.current;
+    if (seat === "patient") {
+      void askPatient(text);
+      return;
+    }
+    if (current.round === 3 || questionsLeft(current) <= 0) return;
+    const round = current.round as 1 | 2;
+    const motionId = seat === "floor" ? createId("motion") : undefined;
+    const chairLine: Line = {
+      id: createId("line"),
+      round,
+      speaker: "chair",
+      to: seat,
+      kind: seat === "floor" ? "motion" : "question",
+      motionId,
+      text,
+      status: "done",
+      at: now(),
+    };
+    const targets = seat === "floor" ? activeAgents(current) : [seat];
+    const replies = targets.map((agentId) => agentLine(agentId, "reply", round, motionId));
+    const next: CaseState = {
+      ...current,
+      lines: [...current.lines, chairLine, ...replies],
+      questionsUsed: { ...current.questionsUsed, [round]: current.questionsUsed[round] + 1 },
+    };
+    stateRef.current = next;
+    updateCase((state) => ({
+      ...state,
+      lines: [...state.lines, chairLine, ...replies],
+      questionsUsed: { ...state.questionsUsed, [round]: state.questionsUsed[round] + 1 },
+    }));
+    void log("motion_filed", { lineId: chairLine.id, motionId, round, target: seat, targets, text, filedBy: "chair" });
+    replies.forEach((line, index) =>
+      void streamInto(line.id, chatRequest(current, targets[index], seat === "floor" ? "motion" : "question", text, motionId)),
+    );
+  };
+
+  const retryLine = (lineId: string) => {
+    const current = stateRef.current;
+    const line = current.lines.find((item) => item.id === lineId);
+    if (!line) return;
+    if (line.speaker === "patient") {
+      const question = [...current.lines].reverse().find((item) => item.to === "patient" && Date.parse(item.at) <= Date.parse(line.at));
+      if (question) void answerPatient(lineId, question.text);
+      return;
+    }
+    const agentId = line.speaker as AgentKey;
+    if (line.kind === "hook-reply") {
+      void streamInto(lineId, chatRequest(current, agentId, "hook", ""));
+      return;
+    }
+    if (line.kind === "debate") {
+      void runDebateFor(agentId, lineId);
+      return;
+    }
+    const patientMotion = line.motionId ? current.lines.find((item) => item.id === line.motionId && item.kind === "patient-motion") : undefined;
+    const prompt = patientMotion ?? current.lines.find((item) => item.speaker === "chair" && (line.motionId ? item.motionId === line.motionId : item.to === agentId && Date.parse(item.at) <= Date.parse(line.at)));
+    if (!prompt) return;
+    void log("line_retry", { lineId, agentId });
+    void streamInto(lineId, chatRequest(current, agentId, patientMotion ? "patient-motion" : line.motionId ? "motion" : "question", prompt.text, line.motionId));
+  };
+
+  const focus = (seat: Seat) => {
+    if (stateRef.current.focus === seat) return;
+    updateCase((current) => ({ ...current, focus: seat }));
+    void log("seat_focused", { seat, round: stateRef.current.round });
+  };
+
+  // ------------------------------------------------------------ the patient's own Motions (triadic)
+
   useEffect(() => {
-    if (slot.mode !== "triadic" || caseState.phase !== "floor") return;
+    if (slot.mode !== "triadic" || caseState.phase !== "chamber") return;
     const tick = () => {
       const current = stateRef.current;
-      if (!current.floorOpenedAt) return;
+      if (!current.floorOpenedAt || current.round === 3 || current.pendingPatientMotion) return;
+      const lastMotion = [...current.lines].reverse().find((line) => line.kind === "patient-motion");
+      if (lastMotion && Date.now() - Date.parse(lastMotion.at) < patientMotionGapMs) return;
       const seconds = (Date.now() - Date.parse(current.floorOpenedAt)) / 1000;
-      const ruled = current.items.filter(isRuled).length;
-      const lastPatientMotion = [...current.items].reverse().find((item) => item.kind === "patient-motion");
-      if (lastPatientMotion && Date.now() - Date.parse(lastPatientMotion.createdAt) < 30_000) return;
+      const interactions = current.lines.filter((line) => line.speaker === "chair").length;
       const next = slot.case.patientMotions.find(
         (motion) =>
           !current.firedPatientMotions.includes(motion.id) &&
-          ((motion.trigger.afterInteractions !== undefined && ruled >= motion.trigger.afterInteractions) ||
+          ((motion.trigger.afterInteractions !== undefined && interactions >= motion.trigger.afterInteractions) ||
             (motion.trigger.afterSeconds !== undefined && seconds >= motion.trigger.afterSeconds)),
       );
       if (!next) return;
-
-      const item: FloorItem = {
-        id: createId("item"),
-        kind: "patient-motion",
-        patientMotionId: next.id,
-        text: next.text,
-        status: "ready",
-        source: "script",
-        createdAt: now(),
-      };
-      stateRef.current = { ...current, firedPatientMotions: [...current.firedPatientMotions, next.id], items: [...current.items, item] };
+      const line: Line = { id: createId("line"), round: current.round, speaker: "patient", kind: "patient-motion", text: next.text, status: "done", at: now() };
+      stateRef.current = { ...current, firedPatientMotions: [...current.firedPatientMotions, next.id], lines: [...current.lines, line], pendingPatientMotion: { lineId: line.id, text: next.text } };
       updateCase((state) =>
         state.firedPatientMotions.includes(next.id)
           ? state
-          : { ...state, firedPatientMotions: [...state.firedPatientMotions, next.id], items: [...state.items, item] },
+          : {
+              ...state,
+              firedPatientMotions: [...state.firedPatientMotions, next.id],
+              lines: [...state.lines, line],
+              pendingPatientMotion: { lineId: line.id, text: next.text },
+            },
       );
-      void log("patient_motion_filed", { itemId: item.id, patientMotionId: next.id, text: next.text, seconds: Math.round(seconds), ruled });
+      void log("patient_motion_filed", { lineId: line.id, patientMotionId: next.id, text: next.text, seconds: Math.round(seconds), interactions, round: current.round });
       withdrawAdvocate("patient_motion");
     };
     tick();
@@ -261,16 +326,202 @@ export function CaseView({ slot, caseIndex, caseCount, caseState, updateCase, on
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [slot.mode, caseState.phase]);
 
-  const closeFloor = () => {
+  const putPatientMotion = () => {
     const current = stateRef.current;
-    updateCase((state) => ({ ...state, phase: "final" }));
-    void log("floor_closed", {
-      ...rulingCounts(current),
-      motions: current.motions.length,
-      patientQuestions: current.chat.filter((turn) => turn.role === "chair").length,
+    const pending = current.pendingPatientMotion;
+    if (!pending) return;
+    const targets = activeAgents(current);
+    const replies = targets.map((agentId) => agentLine(agentId, "reply", current.round, pending.lineId));
+    updateCase((state) => ({ ...state, pendingPatientMotion: undefined, lines: [...state.lines, ...replies], focus: "floor" }));
+    void log("motion_filed", { motionId: pending.lineId, round: current.round, target: "floor", targets, text: pending.text, filedBy: "patient" });
+    replies.forEach((line, index) => void streamInto(line.id, chatRequest(current, targets[index], "patient-motion", pending.text, pending.lineId)));
+  };
+
+  const notePatientMotion = () => {
+    const pending = stateRef.current.pendingPatientMotion;
+    updateCase((state) => ({ ...state, pendingPatientMotion: undefined }));
+    void log("patient_motion_noted", { lineId: pending?.lineId });
+  };
+
+  // ------------------------------------------------------------ pins
+
+  const pin = (sourceId: string, agentId: AgentKey, quote: string) => {
+    const trimmed = quote.trim();
+    if (!trimmed || stateRef.current.pins.some((item) => item.quote === trimmed)) return;
+    const item: Pin = { id: createId("pin"), sourceId, agentId, quote: trimmed, round: stateRef.current.round, at: now() };
+    updateCase((state) => ({ ...state, pins: [...state.pins, item] }));
+    void log("pin_added", { pinId: item.id, sourceId, agentId, quote: trimmed, round: item.round, whole: sourceText(sourceId) === trimmed });
+  };
+
+  const sourceText = (sourceId: string) => {
+    const current = stateRef.current;
+    if (sourceId.startsWith("open-")) {
+      const opening = current.openings[sourceId.slice(5) as AgentKey];
+      return style === "hook" ? opening?.hook : opening?.answer;
+    }
+    return current.lines.find((line) => line.id === sourceId)?.text;
+  };
+
+  const unpin = (item: Pin) => {
+    updateCase((state) => ({ ...state, pins: state.pins.filter((pinItem) => pinItem.id !== item.id) }));
+    void log("pin_removed", { pinId: item.id, agentId: item.agentId, round: stateRef.current.round });
+  };
+
+  // ------------------------------------------------------------ round 2: the debate
+
+  const runDebateFor = async (agentId: AgentKey, lineId: string) => {
+    const current = stateRef.current;
+    patchLine(lineId, { status: "streaming", error: undefined, text: "" });
+    try {
+      const result = await fetchDebate({
+        caseIndex,
+        agentId,
+        others: activeAgents(current).filter((id) => id !== agentId),
+        proceedings: proceedingsOf(current, style, 1),
+        pinned: current.pins.map((item) => `${studyAgentById(item.agentId).shortName}: ${item.quote}`),
+        patientUtterances: slot.mode === "triadic" ? patientUtterances(current) : undefined,
+        requestId: lineId,
+      });
+      patchLine(lineId, { text: result.statement, stances: result.stances, status: "done" });
+    } catch (error) {
+      patchLine(lineId, { status: "error", error: error instanceof Error ? error.message : "No statement" });
+    }
+  };
+
+  const callDebate = async () => {
+    const current = stateRef.current;
+    const at = now();
+    const lines = activeAgents(current).map((agentId) => agentLine(agentId, "debate", 2));
+    stateRef.current = { ...current, round: 2, debateStatus: "loading", lines: [...current.lines, ...lines] };
+    updateCase((state) => ({
+      ...state,
+      round: 2,
+      roundStartedAt: { ...state.roundStartedAt, 2: at },
+      debateStatus: "loading",
+      lines: [...state.lines, ...lines],
+      focus: "floor",
+    }));
+    void log("round_called", { round: 2, questionsUsedInRound1: current.questionsUsed[1], pins: current.pins.length, secondsInRound: secondsSince(current.roundStartedAt[1]) });
+    await Promise.all(lines.map((line) => runDebateFor(line.speaker as AgentKey, line.id)));
+    updateCase((state) => ({ ...state, debateStatus: "ready" }));
+  };
+
+  // ------------------------------------------------------------ round 3: synthesis with the Clerk
+
+  const pinCandidates = (current: CaseState): CandidateState[] =>
+    current.pins.map((item) => ({ id: `pin-${item.id}`, origin: "pin", agentIds: [item.agentId], quote: item.quote, summary: "", sourceLineId: item.sourceId }));
+
+  const gatherCandidates = async () => {
+    const current = stateRef.current;
+    updateCase((state) => ({ ...state, candidatesStatus: "loading", candidatesError: undefined }));
+    try {
+      const { candidates } = await fetchClerkCandidates({
+        caseIndex,
+        proceedings: proceedingsOf(current, style, 2),
+        pinned: current.pins.map((item) => ({ agentId: item.agentId, quote: item.quote })),
+      });
+      const all = [...pinCandidates(current), ...candidates];
+      updateCase((state) => ({ ...state, candidatesStatus: "ready", candidates: all }));
+      void log("candidates_shown", { candidates: all.map(({ id, origin, agentIds, quote, summary }) => ({ id, origin, agentIds, quote, summary })) });
+    } catch (error) {
+      updateCase((state) => ({ ...state, candidatesStatus: "error", candidatesError: error instanceof Error ? error.message : "Could not gather" }));
+    }
+  };
+
+  const callSynthesis = () => {
+    const current = stateRef.current;
+    const at = now();
+    updateCase((state) => ({ ...state, round: 3, roundStartedAt: { ...state.roundStartedAt, 3: at }, pendingPatientMotion: undefined }));
+    void log("round_called", { round: 3, questionsUsedInRound2: current.questionsUsed[2], pins: current.pins.length, secondsInRound: secondsSince(current.roundStartedAt[2]) });
+    void gatherCandidates();
+  };
+
+  const rule = (candidate: CandidateState, verdict: Verdict, amendedText: string | undefined, via: "chat" | "direct") => {
+    const at = now();
+    updateCase((state) => ({
+      ...state,
+      candidates: state.candidates.map((item) =>
+        item.id === candidate.id ? { ...item, proposed: undefined, ruling: { verdict, amendedText, via, at } } : item,
+      ),
+    }));
+    void log("ruling", {
+      candidateId: candidate.id,
+      origin: candidate.origin,
+      agentIds: candidate.agentIds,
+      quote: candidate.quote,
+      summary: candidate.summary,
+      verdict,
+      amendedText,
+      via,
+      previousVerdict: candidate.ruling?.verdict,
+    });
+  };
+
+  const clerkSend = async (text: string) => {
+    const current = stateRef.current;
+    const chairTurn = { id: createId("clerk"), speaker: "chair" as const, text, at: now() };
+    const pending = { id: createId("clerk"), speaker: "clerk" as const, text: "", status: "loading" as const, at: now() };
+    updateCase((state) => ({ ...state, clerk: [...state.clerk, chairTurn, pending] }));
+    void log("clerk_message", { text });
+    try {
+      const result = await fetchClerkReply({
+        caseIndex,
+        message: text,
+        history: current.clerk.filter((turn) => !turn.status).map((turn) => ({ speaker: turn.speaker, text: turn.text })),
+        candidates: current.candidates.map(({ ruling, proposed: _proposed, ...item }) => ({
+          ...item,
+          ruling: ruling ? `${verdictLabels[ruling.verdict]}${ruling.amendedText ? `: "${ruling.amendedText}"` : ""}` : undefined,
+        })),
+      });
+      updateCase((state) => ({
+        ...state,
+        clerk: state.clerk.map((turn) => (turn.id === pending.id ? { ...turn, text: result.reply, status: undefined } : turn)),
+        candidates: state.candidates.map((item) => {
+          const proposal = result.proposals.find((entry) => entry.candidateId === item.id);
+          return proposal ? { ...item, proposed: { verdict: proposal.verdict, amendedText: proposal.amendedText } } : item;
+        }),
+      }));
+    } catch (error) {
+      updateCase((state) => ({
+        ...state,
+        clerk: state.clerk.map((turn) =>
+          turn.id === pending.id ? { ...turn, text: `I could not note that: ${error instanceof Error ? error.message : "error"}. Say it again?`, status: undefined } : turn,
+        ),
+      }));
+    }
+  };
+
+  const confirmProposals = () => {
+    const current = stateRef.current;
+    current.candidates
+      .filter((item) => item.proposed)
+      .forEach((item) => rule(item, item.proposed!.verdict, item.proposed!.amendedText || undefined, "chat"));
+    void log("proposals_confirmed", { count: current.candidates.filter((item) => item.proposed).length });
+  };
+
+  const discardProposals = () => {
+    const count = stateRef.current.candidates.filter((item) => item.proposed).length;
+    updateCase((state) => ({ ...state, candidates: state.candidates.map((item) => ({ ...item, proposed: undefined })) }));
+    void log("proposals_discarded", { count });
+  };
+
+  const sealMinutes = () => {
+    const current = stateRef.current;
+    const minutes = minutesOf(current);
+    updateCase((state) => ({ ...state, minutesSealedAt: now(), phase: "final" }));
+    void log("minutes_sealed", {
+      minutes,
+      accepted: current.candidates.filter((item) => item.ruling?.verdict === "accept").length,
+      amended: current.candidates.filter((item) => item.ruling?.verdict === "amend").length,
+      rejected: current.candidates.filter((item) => item.ruling?.verdict === "reject").length,
+      unruled: current.candidates.filter((item) => !item.ruling).length,
+      pins: current.pins.length,
+      secondsInSynthesis: secondsSince(current.roundStartedAt[3]),
       secondsOnFloor: secondsSince(current.floorOpenedAt),
     });
   };
+
+  // ------------------------------------------------------------ final plan and debrief
 
   const submitFinal = async (final: NonNullable<CaseState["final"]>) => {
     const current = stateRef.current;
@@ -287,61 +538,60 @@ export function CaseView({ slot, caseIndex, caseCount, caseState, updateCase, on
     updateCase((state) => ({ ...state, phase: "debrief", debriefOpenedAt: now() }));
   };
 
-  const header = (
-    <div className="case-header">
-      <div>
-        <span className="case-step">
-          Case {caseIndex + 1} of {caseCount}
-        </span>
-        <h1>{slot.case.title}</h1>
-      </div>
-      <span className={`mode-badge ${slot.mode}`}>
-        {slot.mode === "triadic" ? `Triadic · ${slot.case.patientLabel} is taking part` : "Dyadic · GP and panel"}
-      </span>
-    </div>
-  );
+  const caseLine = `Case ${caseIndex + 1} of ${caseCount}`;
 
   if (caseState.phase === "record") {
     return (
-      <div className="study-page">
-        {header}
+      <div className="sheet-page">
+        <CaseTitle slot={slot} caseLine={caseLine} />
         <div className="record-layout">
           <RecordView slot={slot} />
-          <PrecommitForm onSubmit={openFloor} />
+          <PrecommitForm slot={slot} onSubmit={openChamber} />
         </div>
       </div>
     );
   }
 
-  if (caseState.phase === "floor") {
+  if (caseState.phase === "chamber") {
     return (
-      <div className="study-page wide">
-        {header}
-        <FloorView
-          slot={slot}
-          caseState={caseState}
-          onRule={rule}
-          onRetry={retryItem}
-          onMotion={fileMotion}
-          onAskPatient={askPatient}
-          onClose={closeFloor}
-        />
-      </div>
+      <Chamber
+        slot={slot}
+        caseLine={caseLine}
+        caseState={caseState}
+        style={style}
+        onFocus={focus}
+        onAsk={ask}
+        onHear={hearOut}
+        onPin={pin}
+        onUnpin={unpin}
+        onRetryLine={retryLine}
+        onRetryOpening={retryOpening}
+        onPutPatientMotion={putPatientMotion}
+        onNotePatientMotion={notePatientMotion}
+        onCallDebate={() => void callDebate()}
+        onCallSynthesis={callSynthesis}
+        onRule={(candidate, verdict, amendedText) => rule(candidate, verdict, amendedText, "direct")}
+        onRetryCandidates={() => void gatherCandidates()}
+        onClerkSend={(text) => void clerkSend(text)}
+        onConfirm={confirmProposals}
+        onDiscard={discardProposals}
+        onSeal={sealMinutes}
+      />
     );
   }
 
   if (caseState.phase === "final") {
     return (
-      <div className="study-page">
-        {header}
+      <div className="sheet-page">
+        <CaseTitle slot={slot} caseLine={caseLine} after />
         <FinalForm slot={slot} caseState={caseState} onSubmit={submitFinal} />
       </div>
     );
   }
 
   return (
-    <div className="study-page">
-      {header}
+    <div className="sheet-page">
+      <CaseTitle slot={slot} caseLine={caseLine} after />
       <DebriefView
         caseIndex={caseIndex}
         caseState={caseState}
@@ -355,13 +605,169 @@ export function CaseView({ slot, caseIndex, caseCount, caseState, updateCase, on
   );
 }
 
-// ================================================================ record & precommit
+// ================================================================ the chamber layout
+
+type ChamberProps = {
+  slot: CaseSlot;
+  caseLine: string;
+  caseState: CaseState;
+  style: "paragraph" | "hook";
+  onFocus: (seat: Seat) => void;
+  onAsk: (seat: Seat, text: string) => void;
+  onHear: (agentId: AgentKey) => void;
+  onPin: (sourceId: string, agentId: AgentKey, quote: string) => void;
+  onUnpin: (pin: Pin) => void;
+  onRetryLine: (lineId: string) => void;
+  onRetryOpening: (agentId: AgentKey) => void;
+  onPutPatientMotion: () => void;
+  onNotePatientMotion: () => void;
+  onCallDebate: () => void;
+  onCallSynthesis: () => void;
+  onRule: (candidate: CandidateState, verdict: Verdict, amendedText?: string) => void;
+  onRetryCandidates: () => void;
+  onClerkSend: (text: string) => void;
+  onConfirm: () => void;
+  onDiscard: () => void;
+  onSeal: () => void;
+};
+
+function Chamber(props: ChamberProps) {
+  const { slot, caseState } = props;
+  const [recordOpen, setRecordOpen] = useState(false);
+  const [confirmRound, setConfirmRound] = useState(false);
+  const left = questionsLeft(caseState);
+  const busy = caseState.lines.some((line) => line.status === "streaming");
+  const openingsReady = Object.values(caseState.openings).every((opening) => opening?.status !== "loading");
+
+  useEffect(() => setConfirmRound(false), [caseState.round]);
+
+  const advance = caseState.round === 1 ? props.onCallDebate : props.onCallSynthesis;
+  const advanceLabel = caseState.round === 1 ? "Call the debate" : "Call the synthesis";
+
+  return (
+    <div className={`chamber round-${caseState.round}`}>
+      <div className="rail">
+        <div className="rail-case">
+          <span className="rail-step">{props.caseLine}</span>
+          <strong>{slot.case.title}</strong>
+          <span className={`mode-chip ${slot.mode}`}>{slot.mode === "triadic" ? `${slot.case.patientLabel} is at the table` : "You and the panel"}</span>
+        </div>
+        <ol className="rounds" aria-label="Rounds">
+          {([1, 2, 3] as Round[]).map((round) => (
+            <li key={round} className={round === caseState.round ? "current" : round < caseState.round ? "past" : ""} aria-current={round === caseState.round ? "step" : undefined}>
+              <span className="round-number">{round}</span>
+              {roundNames[round]}
+            </li>
+          ))}
+        </ol>
+        {caseState.round < 3 && (
+          <div className="tokens" aria-label={`${left} of ${roundBudget[caseState.round as 1 | 2]} questions left in this round`}>
+            {Array.from({ length: roundBudget[caseState.round as 1 | 2] }, (_, index) => (
+              <span key={index} className={`token ${index < left ? "" : "spent"}`} />
+            ))}
+            <span className="tokens-label">{left} left</span>
+          </div>
+        )}
+        <button className="rail-record" onClick={() => setRecordOpen(true)}>
+          <BookOpen size={16} /> Record and my plan
+        </button>
+      </div>
+
+      <section className="stage" aria-label="The table">
+        {caseState.round < 3 ? (
+          <>
+            <Table slot={slot} caseState={caseState} style={props.style} onFocus={props.onFocus} />
+            {caseState.pendingPatientMotion && (
+              <div className="patient-motion" role="alert">
+                <span className="patient-motion-who">{slot.case.patientLabel} raises a point</span>
+                <p>“{caseState.pendingPatientMotion.text}”</p>
+                <div className="slip-actions">
+                  <button className="brass" onClick={props.onPutPatientMotion}>
+                    Put it to the Floor
+                  </button>
+                  <button onClick={props.onNotePatientMotion}>Note it and carry on</button>
+                </div>
+              </div>
+            )}
+            <div className="stage-foot">
+              <PinTray caseState={caseState} onUnpin={props.onUnpin} />
+              <div className="advance">
+                {caseState.round === 2 && caseState.debateStatus === "loading" && <span className="advance-note">The panel is reading round 1…</span>}
+                {confirmRound ? (
+                  <>
+                    <span className="advance-note">
+                      {caseState.round === 1
+                        ? "Every panel member will read your conversations and argue them out. You cannot return to round 1."
+                        : "The Clerk will gather the points for your rulings. Questions to the panel close."}
+                    </span>
+                    <button className="brass" disabled={busy} onClick={advance}>
+                      {advanceLabel}
+                    </button>
+                    <button onClick={() => setConfirmRound(false)}>Not yet</button>
+                  </>
+                ) : (
+                  <button
+                    className="brass big"
+                    disabled={!openingsReady || busy || (caseState.round === 2 && caseState.debateStatus !== "ready")}
+                    onClick={() => setConfirmRound(true)}
+                  >
+                    {advanceLabel}
+                  </button>
+                )}
+              </div>
+            </div>
+          </>
+        ) : (
+          <Ledger slot={slot} caseState={caseState} onRule={props.onRule} onRetry={props.onRetryCandidates} />
+        )}
+
+        {recordOpen && (
+          <div className="drawer" role="dialog" aria-label="Record and your locked plan">
+            <button className="icon drawer-close" onClick={() => setRecordOpen(false)} aria-label="Close">
+              <X size={18} />
+            </button>
+            <LockedPlan caseState={caseState} />
+            <RecordView slot={slot} />
+          </div>
+        )}
+      </section>
+
+      {caseState.round < 3 ? (
+        <Paper
+          slot={slot}
+          caseState={caseState}
+          style={props.style}
+          onAsk={props.onAsk}
+          onHear={props.onHear}
+          onPin={props.onPin}
+          onRetryLine={props.onRetryLine}
+          onRetryOpening={props.onRetryOpening}
+          onFocus={props.onFocus}
+        />
+      ) : (
+        <ClerkPaper caseState={caseState} onSend={props.onClerkSend} onConfirm={props.onConfirm} onDiscard={props.onDiscard} onSeal={props.onSeal} />
+      )}
+    </div>
+  );
+}
+
+// ================================================================ record, pre-commitment, final, debrief
+
+function CaseTitle({ slot, caseLine, after = false }: { slot: CaseSlot; caseLine: string; after?: boolean }) {
+  return (
+    <header className="case-title">
+      <span className="rail-step">{caseLine}</span>
+      <h1>{slot.case.title}</h1>
+      <span className={`mode-chip ${slot.mode}`}>{slot.mode === "triadic" ? `${slot.case.patientLabel} ${after ? "joined you" : "will be"} at the table` : "You and the panel"}</span>
+    </header>
+  );
+}
 
 function RecordView({ slot }: { slot: CaseSlot }) {
   return (
-    <section className="record-card">
+    <section className="record">
       <h2>Patient record</h2>
-      <p className="record-note">Synthetic record. No real patient.</p>
+      <p className="record-note">A synthetic record. No real patient.</p>
       {slot.case.record.map((section) => (
         <div className="record-section" key={section.heading}>
           <h3>{section.heading}</h3>
@@ -376,17 +782,20 @@ function RecordView({ slot }: { slot: CaseSlot }) {
   );
 }
 
-function Scale({
-  name,
-  options,
-  value,
-  onChange,
-}: {
-  name: string;
-  options: string[];
-  value?: number;
-  onChange: (value: number) => void;
-}) {
+function LockedPlan({ caseState }: { caseState: CaseState }) {
+  return (
+    <section className="locked-plan">
+      <h2>Your plan before the panel spoke</h2>
+      <p className="record-note">Locked when you opened the table.</p>
+      <h3>Working diagnosis</h3>
+      <p>{caseState.precommit?.diagnosis}</p>
+      <h3>Plan</h3>
+      <p>{caseState.precommit?.plan}</p>
+    </section>
+  );
+}
+
+function Scale({ name, options, value, onChange }: { name: string; options: string[]; value?: number; onChange: (value: number) => void }) {
   return (
     <div className="scale" role="radiogroup">
       {options.map((label, index) => (
@@ -399,16 +808,19 @@ function Scale({
   );
 }
 
-function PrecommitForm({ onSubmit }: { onSubmit: (value: { diagnosis: string; plan: string; confidence: number }) => void }) {
+function PrecommitForm({ slot, onSubmit }: { slot: CaseSlot; onSubmit: (value: { diagnosis: string; plan: string; confidence: number }) => void }) {
   const [diagnosis, setDiagnosis] = useState("");
   const [plan, setPlan] = useState("");
   const [confidence, setConfidence] = useState<number>();
   const ready = diagnosis.trim().length > 1 && plan.trim().length > 1 && confidence !== undefined;
 
   return (
-    <section className="form-card precommit">
+    <section className="form-sheet precommit">
       <h2>Before the panel speaks</h2>
-      <p>Record your own working diagnosis and plan. The panel's discussion appears after you submit, and this entry is then locked.</p>
+      <p>
+        Record your own working diagnosis and plan. It is locked when you open the table, and you can look back at it at any time.
+        {slot.mode === "triadic" ? ` ${slot.case.patientLabel} will be at the table with you and the panel.` : ""}
+      </p>
       <label className="field">
         Working diagnosis
         <textarea rows={3} value={diagnosis} onChange={(event) => setDiagnosis(event.target.value)} />
@@ -421,383 +833,14 @@ function PrecommitForm({ onSubmit }: { onSubmit: (value: { diagnosis: string; pl
         <legend>Before the panel's discussion is shown, how confident are you in your working diagnosis and plan?</legend>
         <Scale name="confidence-before" options={confidenceOptions} value={confidence} onChange={setConfidence} />
       </fieldset>
-      <button className="primary" disabled={!ready} onClick={() => onSubmit({ diagnosis: diagnosis.trim(), plan: plan.trim(), confidence: confidence! })}>
-        Lock my plan and open the Floor
+      <button className="brass big" disabled={!ready} onClick={() => onSubmit({ diagnosis: diagnosis.trim(), plan: plan.trim(), confidence: confidence! })}>
+        Lock my plan and open the table
       </button>
     </section>
   );
 }
 
-// ================================================================ floor
-
-type FloorViewProps = {
-  slot: CaseSlot;
-  caseState: CaseState;
-  onRule: (item: FloorItem, verdict: Verdict, amendedText?: string) => void;
-  onRetry: (item: FloorItem) => void;
-  onMotion: (text: string, target: AgentKey | "floor", filedBy?: "chair" | "patient") => void;
-  onAskPatient: (question: string) => Promise<void>;
-  onClose: () => void;
-};
-
-function FloorView({ slot, caseState, onRule, onRetry, onMotion, onAskPatient, onClose }: FloorViewProps) {
-  const openings = caseState.items.filter((item) => item.kind === "opening");
-  const panelOpenings = panelAgentIds.flatMap((id) => openings.filter((item) => item.agentId === id));
-  const negativeOpening = openings.filter((item) => item.agentId === negativeAgentId);
-  const withdrawn = Boolean(caseState.advocateWithdrawnAt);
-
-  // Motions and patient Motions in the order they reached the Floor.
-  const proceedings = useMemo(() => {
-    const entries: Array<{ at: string; kind: "motion"; motion: ChairMotion } | { at: string; kind: "patient"; item: FloorItem }> = [
-      ...caseState.motions.map((motion) => ({ at: motion.at, kind: "motion" as const, motion })),
-      ...caseState.items
-        .filter((item) => item.kind === "patient-motion")
-        .map((item) => ({ at: item.createdAt, kind: "patient" as const, item })),
-    ];
-    return entries.sort((a, b) => a.at.localeCompare(b.at));
-  }, [caseState.motions, caseState.items]);
-
-  const card = (item: FloorItem) => (
-    <FloorCard
-      key={item.id}
-      item={item}
-      withdrawn={item.agentId === "patientAdvocate" && withdrawn}
-      onRule={onRule}
-      onRetry={onRetry}
-      onPutToPanel={item.kind === "patient-motion" ? () => onMotion(item.text, "floor", "patient") : undefined}
-      patientLabel={slot.case.patientLabel}
-    />
-  );
-
-  return (
-    <div className="floor-layout">
-      <aside className="floor-left">
-        <details open>
-          <summary>Your locked pre-commitment</summary>
-          <div className="precommit-locked">
-            <strong>Working diagnosis</strong>
-            <p>{caseState.precommit?.diagnosis}</p>
-            <strong>Plan</strong>
-            <p>{caseState.precommit?.plan}</p>
-          </div>
-        </details>
-        <details>
-          <summary>Patient record</summary>
-          <RecordView slot={slot} />
-        </details>
-      </aside>
-
-      <main className="floor-main">
-        <div className="motion-banner">
-          <span>Motion before the Floor</span>
-          <p>{slot.case.motion}</p>
-        </div>
-
-        <h2 className="floor-heading">Opening contributions</h2>
-        <div className="card-stack">{panelOpenings.map(card)}</div>
-
-        <section className="negative-panel" aria-label={negativePanelLabel}>
-          <div className="negative-label">{negativePanelLabel}</div>
-          {negativeOpening.map(card)}
-        </section>
-
-        {proceedings.length > 0 && <h2 className="floor-heading">Proceedings</h2>}
-        {proceedings.map((entry) =>
-          entry.kind === "patient" ? (
-            <div className="proceeding" key={entry.item.id}>
-              {card(entry.item)}
-            </div>
-          ) : (
-            <div className="proceeding" key={entry.motion.id}>
-              <div className="motion-filed">
-                <span>
-                  {entry.motion.filedBy === "patient" ? `${slot.case.patientLabel}'s Motion, put to ` : "Chair's Motion to "}
-                  {entry.motion.target === "floor" ? "the whole Floor" : studyAgentById(entry.motion.target).name}
-                </span>
-                <p>{entry.motion.text}</p>
-              </div>
-              <div className="card-stack">
-                {caseState.items.filter((item) => item.motionId === entry.motion.id).map((item) =>
-                  item.agentId === negativeAgentId ? (
-                    <div className="negative-inline" key={item.id}>
-                      <div className="negative-label small">{negativePanelLabel}</div>
-                      {card(item)}
-                    </div>
-                  ) : (
-                    card(item)
-                  ),
-                )}
-              </div>
-            </div>
-          ),
-        )}
-      </main>
-
-      <aside className="floor-right">
-        {slot.mode === "triadic" && (
-          <PatientSeat patientLabel={slot.case.patientLabel} chat={caseState.chat} onAsk={onAskPatient} />
-        )}
-        <MotionComposer caseState={caseState} onMotion={onMotion} />
-        <MinutesPanel caseState={caseState} patientLabel={slot.case.patientLabel} onClose={onClose} />
-      </aside>
-    </div>
-  );
-}
-
-const verdictLabel: Record<Verdict, string> = { accept: "Accepted", amend: "Amended", reject: "Rejected" };
-
-function FloorCard({
-  item,
-  withdrawn,
-  onRule,
-  onRetry,
-  onPutToPanel,
-  patientLabel,
-}: {
-  item: FloorItem;
-  withdrawn: boolean;
-  onRule: (item: FloorItem, verdict: Verdict, amendedText?: string) => void;
-  onRetry: (item: FloorItem) => void;
-  onPutToPanel?: () => void;
-  patientLabel: string;
-}) {
-  const [amending, setAmending] = useState(false);
-  const [draft, setDraft] = useState(item.text);
-  const [rerule, setRerule] = useState(false);
-  const agent = item.agentId ? studyAgentById(item.agentId) : undefined;
-  const isPatient = item.kind === "patient-motion";
-
-  return (
-    <article
-      className={`floor-card ${agent?.negative ? "negative" : ""} ${isPatient ? "patient" : ""} ${item.ruling ? `ruled ${item.ruling.verdict}` : ""}`}
-      style={agent ? ({ "--accent": agent.accent } as CSSProperties) : undefined}
-    >
-      <header>
-        {agent ? <img src={agent.art} alt="" /> : <span className="patient-avatar">{patientLabel.slice(-1)}</span>}
-        <div>
-          <strong>{agent ? agent.name : `${patientLabel} (patient) files a Motion`}</strong>
-          <span>{agent ? agent.stance : "The patient can see the Floor"}</span>
-        </div>
-        {withdrawn && <em className="withdrawn">Withdrawn: the patient is speaking for themselves</em>}
-      </header>
-
-      {item.status === "loading" && <p className="loading-line">Deliberating…</p>}
-      {item.status === "error" && (
-        <div className="item-error">
-          <p>This contribution did not arrive. {item.error}</p>
-          <button onClick={() => onRetry(item)}>Try again</button>
-        </div>
-      )}
-      {item.status === "ready" && !amending && (
-        <>
-          <p className="card-text">{effectiveText(item)}</p>
-          {item.ruling?.verdict === "amend" && <p className="amend-note">Amended by the Chair</p>}
-        </>
-      )}
-      {amending && (
-        <div className="amend-box">
-          <textarea rows={5} value={draft} onChange={(event) => setDraft(event.target.value)} />
-          <div className="ruling-row">
-            <button
-              className="primary"
-              disabled={!draft.trim() || draft.trim() === item.text.trim()}
-              onClick={() => {
-                onRule(item, "amend", draft.trim());
-                setAmending(false);
-                setRerule(false);
-              }}
-            >
-              Save amendment
-            </button>
-            <button onClick={() => setAmending(false)}>Cancel</button>
-          </div>
-        </div>
-      )}
-
-      {item.status === "ready" && !amending && (
-        <footer className="ruling-row">
-          {item.ruling && !rerule ? (
-            <>
-              <span className={`verdict ${item.ruling.verdict}`}>{verdictLabel[item.ruling.verdict]}</span>
-              <button className="link" onClick={() => setRerule(true)}>
-                Change ruling
-              </button>
-            </>
-          ) : (
-            <>
-              <button className="rule accept" onClick={() => { onRule(item, "accept"); setRerule(false); }}>
-                Accept
-              </button>
-              <button
-                className="rule amend"
-                onClick={() => {
-                  setDraft(effectiveText(item));
-                  setAmending(true);
-                }}
-              >
-                Amend
-              </button>
-              <button className="rule reject" onClick={() => { onRule(item, "reject"); setRerule(false); }}>
-                Reject
-              </button>
-            </>
-          )}
-          {onPutToPanel && (
-            <button className="link" onClick={onPutToPanel}>
-              Put to the panel
-            </button>
-          )}
-        </footer>
-      )}
-    </article>
-  );
-}
-
-function MotionComposer({
-  caseState,
-  onMotion,
-}: {
-  caseState: CaseState;
-  onMotion: (text: string, target: AgentKey | "floor") => void;
-}) {
-  const [text, setText] = useState("");
-  const [target, setTarget] = useState<AgentKey | "floor">("floor");
-  const available = activeAgents(caseState);
-  const pending = caseState.items.some((item) => item.status === "loading");
-
-  return (
-    <section className="side-card">
-      <h3>File a Motion</h3>
-      <p className="hint">Ask the panel a question or put a proposal to it.</p>
-      <select value={target} onChange={(event) => setTarget(event.target.value as AgentKey | "floor")}>
-        <option value="floor">The whole Floor</option>
-        {studyAgents
-          .filter((agent) => available.includes(agent.id))
-          .map((agent) => (
-            <option key={agent.id} value={agent.id}>
-              {agent.name}
-            </option>
-          ))}
-      </select>
-      <textarea rows={3} value={text} placeholder="e.g. What would make you change your mind?" onChange={(event) => setText(event.target.value)} />
-      <button
-        className="primary"
-        disabled={!text.trim() || pending}
-        onClick={() => {
-          onMotion(text.trim(), available.includes(target as AgentKey) || target === "floor" ? target : "floor");
-          setText("");
-        }}
-      >
-        {pending ? "Panel is responding…" : "File Motion"}
-      </button>
-    </section>
-  );
-}
-
-function PatientSeat({
-  patientLabel,
-  chat,
-  onAsk,
-}: {
-  patientLabel: string;
-  chat: CaseState["chat"];
-  onAsk: (question: string) => Promise<void>;
-}) {
-  const [question, setQuestion] = useState("");
-  const waiting = chat.some((turn) => turn.status === "loading");
-
-  return (
-    <section className="side-card patient-seat">
-      <h3>{patientLabel}, the patient</h3>
-      <p className="hint">Simulated patient. They can see the Floor and may file Motions. You can ask them directly.</p>
-      <div className="chat">
-        {chat.length === 0 && <p className="hint">No questions asked yet.</p>}
-        {chat.map((turn) => (
-          <p key={turn.id} className={`chat-turn ${turn.role} ${turn.status ?? ""}`}>
-            <strong>{turn.role === "chair" ? "You" : patientLabel}:</strong>{" "}
-            {turn.status === "loading" ? "…" : turn.text}
-          </p>
-        ))}
-      </div>
-      <textarea
-        rows={2}
-        value={question}
-        placeholder={`Ask ${patientLabel} a question`}
-        onChange={(event) => setQuestion(event.target.value)}
-        onKeyDown={(event) => {
-          if (event.key === "Enter" && !event.shiftKey && question.trim() && !waiting) {
-            event.preventDefault();
-            void onAsk(question.trim());
-            setQuestion("");
-          }
-        }}
-      />
-      <button
-        className="primary"
-        disabled={!question.trim() || waiting}
-        onClick={() => {
-          void onAsk(question.trim());
-          setQuestion("");
-        }}
-      >
-        Ask the patient
-      </button>
-    </section>
-  );
-}
-
-function MinutesPanel({ caseState, patientLabel, onClose }: { caseState: CaseState; patientLabel: string; onClose: () => void }) {
-  const [confirming, setConfirming] = useState(false);
-  const minutes = caseState.items.filter((item) => item.ruling && item.ruling.verdict !== "reject");
-  const counts = rulingCounts(caseState);
-
-  return (
-    <section className="side-card minutes">
-      <h3>Minutes</h3>
-      <p className="hint">Only what you accept or amend enters the Minutes.</p>
-      {minutes.length === 0 ? (
-        <p className="hint">Nothing accepted yet.</p>
-      ) : (
-        <ol>
-          {minutes.map((item) => (
-            <li key={item.id}>
-              <strong>{item.agentId ? studyAgentById(item.agentId).shortName : patientLabel}:</strong> {effectiveText(item)}
-            </li>
-          ))}
-        </ol>
-      )}
-      {confirming ? (
-        <div className="confirm">
-          {counts.unruled > 0 && (
-            <p>
-              {counts.unruled} contribution{counts.unruled === 1 ? " has" : "s have"} not been ruled on and will not enter the Minutes.
-            </p>
-          )}
-          <button className="primary" onClick={onClose}>
-            Close the Floor
-          </button>
-          <button onClick={() => setConfirming(false)}>Keep deliberating</button>
-        </div>
-      ) : (
-        <button className="primary" onClick={() => setConfirming(true)}>
-          Close the Floor and record my final plan
-        </button>
-      )}
-    </section>
-  );
-}
-
-// ================================================================ final & debrief
-
-function FinalForm({
-  slot,
-  caseState,
-  onSubmit,
-}: {
-  slot: CaseSlot;
-  caseState: CaseState;
-  onSubmit: (value: NonNullable<CaseState["final"]>) => Promise<void>;
-}) {
+function FinalForm({ slot, caseState, onSubmit }: { slot: CaseSlot; caseState: CaseState; onSubmit: (value: NonNullable<CaseState["final"]>) => Promise<void> }) {
   const prefilled = slot.planStart === "prefilled";
   const [saving, setSaving] = useState(false);
   const [diagnosis, setDiagnosis] = useState(prefilled ? caseState.precommit?.diagnosis ?? "" : "");
@@ -805,36 +848,34 @@ function FinalForm({
   const [confidenceAfter, setConfidenceAfter] = useState<number>();
   const [change, setChange] = useState<number>();
   const [changeReason, setChangeReason] = useState("");
-  const minutes = caseState.items.filter((item) => item.ruling && item.ruling.verdict !== "reject");
+  const minutes = minutesOf(caseState);
   const ready = diagnosis.trim() && plan.trim() && confidenceAfter && change;
 
   return (
     <div className="record-layout">
-      <section className="record-card">
-        <h2>Your pre-commitment</h2>
-        <div className="precommit-locked">
-          <strong>Working diagnosis</strong>
-          <p>{caseState.precommit?.diagnosis}</p>
-          <strong>Plan</strong>
-          <p>{caseState.precommit?.plan}</p>
-        </div>
-        <h2>Minutes</h2>
-        {minutes.length ? (
-          <ol className="minutes-list">
-            {minutes.map((item) => (
-              <li key={item.id}>
-                <strong>{item.agentId ? studyAgentById(item.agentId).shortName : slot.case.patientLabel}:</strong> {effectiveText(item)}
-              </li>
-            ))}
-          </ol>
-        ) : (
-          <p className="hint">You did not accept any contributions into the Minutes.</p>
-        )}
-      </section>
+      <div className="side-stack">
+        <LockedPlan caseState={caseState} />
+        <section className="minutes">
+          <h2>The Minutes</h2>
+          {minutes.length ? (
+            <ol>
+              {minutes.map((item) => (
+                <li key={item.id}>
+                  <span className="minutes-who">{listNames(item.agentIds.map((id) => studyAgentById(id).shortName))}</span>
+                  {item.text}
+                  {item.verdict === "amend" && <span className="minutes-part"> (in part)</span>}
+                </li>
+              ))}
+            </ol>
+          ) : (
+            <p className="record-note">You did not carry anything forward into the Minutes.</p>
+          )}
+        </section>
+      </div>
 
-      <section className="form-card">
+      <section className="form-sheet">
         <h2>Your final diagnosis and plan</h2>
-        <p>{prefilled ? "This starts from what you recorded before the panel. Edit it as you see fit." : "Write your final working diagnosis and plan."}</p>
+        <p>{prefilled ? "This starts from what you recorded before the panel spoke. Change it as you see fit." : "Write your final working diagnosis and plan."}</p>
         <label className="field">
           Working diagnosis
           <textarea rows={3} value={diagnosis} onChange={(event) => setDiagnosis(event.target.value)} />
@@ -856,7 +897,7 @@ function FinalForm({
           <textarea rows={3} value={changeReason} onChange={(event) => setChangeReason(event.target.value)} />
         </label>
         <button
-          className="primary"
+          className="brass big"
           disabled={!ready || saving}
           onClick={() => {
             setSaving(true);
@@ -877,17 +918,7 @@ function FinalForm({
   );
 }
 
-function DebriefView({
-  caseIndex,
-  caseState,
-  isLast,
-  onContinue,
-}: {
-  caseIndex: number;
-  caseState: CaseState;
-  isLast: boolean;
-  onContinue: () => void;
-}) {
+function DebriefView({ caseIndex, caseState, isLast, onContinue }: { caseIndex: number; caseState: CaseState; isLast: boolean; onContinue: () => void }) {
   const [debrief, setDebrief] = useState<Debrief>();
   const [error, setError] = useState<string>();
   const [attempt, setAttempt] = useState(0);
@@ -915,35 +946,46 @@ function DebriefView({
     };
   }, [caseIndex, attempt]);
 
-  const negativeItems = caseState.items.filter((item) => item.agentId === negativeAgentId && item.status === "ready");
+  const negativeSaid = [
+    caseState.openings[negativeAgentId]?.status === "ready" ? caseState.openings[negativeAgentId]!.answer : "",
+    ...caseState.lines.filter((line) => line.speaker === negativeAgentId && line.status === "done").map((line) => line.text),
+  ].filter(Boolean);
+  const negativeRulings = caseState.candidates.filter((item) => item.agentIds.includes(negativeAgentId));
 
   if (error) {
     return (
-      <section className="form-card">
+      <section className="form-sheet">
         <p>{error}</p>
         <button onClick={() => setAttempt((value) => value + 1)}>Try again</button>
       </section>
     );
   }
-  if (!debrief) return <section className="form-card">Loading the debrief…</section>;
+  if (!debrief) return <section className="form-sheet">Loading the debrief…</section>;
 
   return (
-    <section className="form-card debrief">
+    <section className="form-sheet debrief">
       <h2>Debrief</h2>
       {debrief.draft && <p className="draft-flag">Draft reference plan: pending review by the Chief Investigator.</p>}
 
-      <h3>The deliberately unreliable panel member</h3>
-      <p>
-        <strong>{debrief.negativeAgentName}.</strong> {debrief.negativePurpose}
-      </p>
-      {negativeItems.length > 0 && (
+      <div className="debrief-negative">
+        <img src={studyAgentById(negativeAgentId).art} alt="" />
+        <div>
+          <h3>The deliberately unreliable panel member</h3>
+          <p>
+            <strong>{debrief.negativeAgentName}.</strong> {debrief.negativePurpose}
+          </p>
+        </div>
+      </div>
+      {negativeSaid.length > 0 && (
         <div className="negative-recap">
-          {negativeItems.map((item) => (
-            <blockquote key={item.id}>
-              <p>{item.text}</p>
-              <footer>Your ruling: {item.ruling ? verdictLabel[item.ruling.verdict].toLowerCase() : "not ruled on"}</footer>
-            </blockquote>
+          {negativeSaid.slice(0, 3).map((text, index) => (
+            <blockquote key={index}>{text}</blockquote>
           ))}
+          {negativeRulings.length > 0 && (
+            <p className="record-note">
+              Your rulings on its points: {negativeRulings.map((item) => (item.ruling ? verdictLabels[item.ruling.verdict].toLowerCase() : "not ruled on")).join(", ")}.
+            </p>
+          )}
         </div>
       )}
 
@@ -956,7 +998,7 @@ function DebriefView({
         ))}
       </ul>
       <p className="caveat">{debrief.caveat}</p>
-      <button className="primary" onClick={onContinue}>
+      <button className="brass big" onClick={onContinue}>
         {isLast ? "Continue to the questionnaire" : "Continue to the next case"}
       </button>
     </section>

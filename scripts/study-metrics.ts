@@ -45,20 +45,26 @@ for (const { participant, events } of data.participants) {
   participant.sequence.forEach((slot, caseIndex) => {
     const precommit = of("precommit_submitted", caseIndex).at(-1)?.data;
     const final = of("final_submitted", caseIndex).at(-1)?.data;
-    const closed = of("floor_closed", caseIndex).at(-1)?.data;
+    const sealed = of("minutes_sealed", caseIndex).at(-1)?.data;
+    const opened = of("floor_opened", caseIndex).at(-1)?.data;
 
-    // Final ruling per item (the Chair can change a ruling).
+    // Final ruling per candidate (the Chair can change a ruling).
     const finalRulings = new Map<string, any>();
-    for (const event of of("ruling", caseIndex)) finalRulings.set(event.data.itemId, event.data);
+    for (const event of of("ruling", caseIndex)) finalRulings.set(event.data.candidateId, event.data);
     const rulings = [...finalRulings.values()];
     const count = (verdict: string) => rulings.filter((ruling) => ruling.verdict === verdict).length;
-    const negative = rulings.filter((ruling) => ruling.agentId === "oldGeezer");
-    const negativeOpening = negative.find((ruling) => ruling.kind === "opening");
-    const panelRulings = rulings.filter((ruling) => ruling.kind !== "patient-motion");
-    const overrules = panelRulings.filter((ruling) => ruling.verdict !== "accept").length;
+    const negative = rulings.filter((ruling) => (ruling.agentIds ?? []).includes("oldGeezer"));
+    const overrules = rulings.filter((ruling) => ruling.verdict !== "accept").length;
+
+    const motions = of("motion_filed", caseIndex);
+    const chairMotions = motions.filter((event) => event.data.filedBy !== "patient");
+    const inRound = (round: number) => chairMotions.filter((event) => event.data.round === round);
+    const pinsAdded = of("pin_added", caseIndex).length;
+    const pinsRemoved = of("pin_removed", caseIndex).length;
 
     const patientReplies = of("patient_reply", caseIndex);
     const disclosed = [...new Set(patientReplies.flatMap((event) => event.data.disclosed ?? []))];
+    const stances = of("debate_contribution", caseIndex).flatMap((event) => event.data.stances ?? []);
 
     caseRows.push({
       participantId: participant.participantId,
@@ -69,6 +75,7 @@ for (const { participant, events } of data.participants) {
       mode: slot.mode,
       floorSource: slot.floorSource,
       planStart: slot.planStart,
+      openingStyle: slot.openingStyle ?? opened?.openingStyle,
       confidenceBefore: precommit?.confidence,
       confidenceAfter: final?.confidenceAfter,
       confidenceDelta: precommit && final ? final.confidenceAfter - precommit.confidence : undefined,
@@ -76,26 +83,38 @@ for (const { participant, events } of data.participants) {
       diagnosisTextChanged: final?.diagnosisChanged,
       planTextChanged: final?.planChanged,
       secondsOnRecord: precommit?.secondsOnRecord,
-      secondsOnFloor: closed?.secondsOnFloor,
+      secondsOnFloor: sealed?.secondsOnFloor,
+      secondsInSynthesis: sealed?.secondsInSynthesis,
+      questionsToPanelRound1: inRound(1).length,
+      questionsToPanelRound2: inRound(2).length,
+      motionsToWholeFloor: chairMotions.filter((event) => event.data.target === "floor").length,
+      questionsToOneMember: chairMotions.filter((event) => event.data.target !== "floor").length,
+      hooksOpened: of("hook_opened", caseIndex).length,
+      pinsKept: pinsAdded - pinsRemoved,
+      candidates: of("candidates_shown", caseIndex).at(-1)?.data?.candidates?.length,
       itemsRuled: rulings.length,
       accepted: count("accept"),
       amended: count("amend"),
       rejected: count("reject"),
-      unruledAtClose: closed?.unruled,
-      panelOverrules: overrules,
-      panelOverruleRate: panelRulings.length ? (overrules / panelRulings.length).toFixed(2) : undefined,
-      negativeOpeningVerdict: negativeOpening?.verdict ?? "not ruled",
-      negativeAcceptedOrAmended: negative.filter((ruling) => ruling.verdict !== "reject").length,
+      unruledAtSeal: sealed?.unruled,
+      overrules,
+      overruleRate: rulings.length ? (overrules / rulings.length).toFixed(2) : undefined,
+      rulingsViaClerk: rulings.filter((ruling) => ruling.via === "chat").length,
+      rulingsDirect: rulings.filter((ruling) => ruling.via === "direct").length,
       rulingChanges: of("ruling", caseIndex).filter((event) => event.data.previousVerdict).length,
-      chairMotions: of("motion_filed", caseIndex).filter((event) => event.data.filedBy !== "patient").length,
-      patientMotionsPutToPanel: of("motion_filed", caseIndex).filter((event) => event.data.filedBy === "patient").length,
+      negativeVerdicts: negative.map((ruling) => ruling.verdict),
+      negativeCarried: negative.filter((ruling) => ruling.verdict !== "reject").length,
+      debateChallenges: stances.filter((stance: any) => stance.stance === "challenges").length,
+      debateBacks: stances.filter((stance: any) => stance.stance === "backs").length,
+      patientMotionsFired: of("patient_motion_filed", caseIndex).length,
+      patientMotionsPutToPanel: motions.filter((event) => event.data.filedBy === "patient").length,
       questionsToPatient: of("patient_question", caseIndex).length,
       concealedDisclosed: disclosed,
-      patientMotionsFired: of("patient_motion_filed", caseIndex).length,
       advocateWithdrawnBy: of("advocate_withdrawn", caseIndex)[0]?.data?.trigger,
       llmErrors: of("llm_error", caseIndex).length,
       precommitDiagnosis: precommit?.diagnosis,
       precommitPlan: precommit?.plan,
+      minutes: (sealed?.minutes ?? []).map((item: any) => item.text),
       finalDiagnosis: final?.diagnosis,
       finalPlan: final?.plan,
       changeReason: final?.changeReason,

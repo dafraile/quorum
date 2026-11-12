@@ -204,9 +204,10 @@ export const threadFor = (caseState: CaseState, agentId: AgentKey) => {
   const motionIdsAnswered = new Set(
     caseState.lines.filter((line) => line.speaker === agentId && line.motionId).map((line) => line.motionId),
   );
+  type Turn = { speaker: "chair" | "agent"; text: string; toFloor?: boolean };
   return caseState.lines
     .filter((line) => line.status === "done")
-    .flatMap((line) => {
+    .flatMap((line): Turn[] => {
       if (line.speaker === agentId && line.kind !== "debate") return [{ speaker: "agent" as const, text: line.text }];
       if (line.speaker === "chair" && line.to === agentId) return [{ speaker: "chair" as const, text: line.text }];
       if (line.speaker === "chair" && line.to === "floor" && motionIdsAnswered.has(line.motionId))

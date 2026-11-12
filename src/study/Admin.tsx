@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { studyAgentById } from "../../shared/studyRoster";
-import type { AgentKey, FloorSource, ParticipantConfig, PlanStart } from "../../shared/studyTypes";
+import type { AgentKey, FloorSource, OpeningStyle, ParticipantConfig, PlanStart } from "../../shared/studyTypes";
 import "./study.css";
 
 type ParticipantRow = ParticipantConfig & {
@@ -41,6 +41,7 @@ export function StudyAdmin() {
   const [showConsent, setShowConsent] = useState(true);
   const [floorSources, setFloorSources] = useState<FloorSource[]>(["static", "static"]);
   const [planStarts, setPlanStarts] = useState<Array<PlanStart | "random">>(["random", "random"]);
+  const [openingStyles, setOpeningStyles] = useState<Array<OpeningStyle | "random">>(["random", "random"]);
   const [allocation, setAllocation] = useState<"auto" | "0" | "1" | "2" | "3">("auto");
   const [confirmDelete, setConfirmDelete] = useState<string>();
 
@@ -93,6 +94,7 @@ export function StudyAdmin() {
   const create = async () => {
     setNotice(undefined);
     const randomPlan = planStarts.includes("random");
+    const randomOpening = openingStyles.includes("random");
     try {
       const created = await adminFetch("/api/study/admin/participants", token, {
         method: "POST",
@@ -102,6 +104,7 @@ export function StudyAdmin() {
           showConsent,
           floorSources,
           planStarts: randomPlan ? undefined : planStarts,
+          openingStyles: randomOpening ? undefined : openingStyles,
           allocation: allocation === "auto" ? undefined : Number(allocation),
         }),
       });
@@ -142,7 +145,7 @@ export function StudyAdmin() {
   const mixSummary = (row: ParticipantRow) =>
     (Object.entries(row.providerMix) as Array<[AgentKey, string]>)
       .map(([agent, provider]) => `${studyAgentById(agent).shortName}: ${provider === "openai" ? "OpenAI" : "Anthropic"}`)
-      .join(" · ");
+      .join(", ");
 
   return (
     <div className="study admin">
@@ -216,6 +219,18 @@ export function StudyAdmin() {
                 <option value="prefilled">Final plan box: pre-filled</option>
                 <option value="blank">Final plan box: blank</option>
               </select>
+              <select
+                value={openingStyles[position]}
+                onChange={(event) =>
+                  setOpeningStyles((current) =>
+                    current.map((value, index) => (index === position ? (event.target.value as OpeningStyle | "random") : value)),
+                  )
+                }
+              >
+                <option value="random">Cards open with: random (pilot: one of each)</option>
+                <option value="paragraph">Cards open with: a paragraph</option>
+                <option value="hook">Cards open with: a one-line hook</option>
+              </select>
             </div>
           ))}
         </div>
@@ -262,7 +277,7 @@ export function StudyAdmin() {
                 <td>
                   {row.sequence.map((slot, index) => (
                     <div key={index}>
-                      {index + 1}. {slot.caseId} · {slot.mode} · {slot.floorSource} · {slot.planStart}
+                      {index + 1}. {slot.caseId}, {slot.mode}, {slot.floorSource} Floor, {slot.openingStyle ?? "paragraph"}, plan box {slot.planStart}
                     </div>
                   ))}
                 </td>
