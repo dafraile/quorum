@@ -1,4 +1,12 @@
-import { ProviderError, type SourceLink, type StructuredCall, type StructuredResult } from "./types.ts";
+import {
+  ProviderError,
+  type OnTextDelta,
+  type SourceLink,
+  type StructuredCall,
+  type StructuredResult,
+  type TextStreamCall,
+  type TextStreamResult,
+} from "./types.ts";
 
 export const openaiDefaultModel = () => process.env.OPENAI_MODEL || "gpt-5.5";
 
@@ -150,5 +158,85 @@ export const callOpenAIStructured = async (call: StructuredCall): Promise<Struct
     throw new ProviderError("openai", 502, error instanceof Error ? error.message : "OpenAI request failed");
   } finally {
     clearTimeout(timeout);
+  }
+};
+
+/** Streams plain text from the Responses API (server-sent events), calling onDelta per text chunk. */
+export const streamOpenAIText = async (call: TextStreamCall, onDelta: OnTextDelta): Promise<TextStreamResult> => {
+  if (!openaiConfigured()) {
+    throw new ProviderError("openai", 503, "OPENAI_API_KEY is not configured");
+  }
+
+  const model = call.model && call.model !== "server-default" ? call.model : openaiDefaultModel();
+  const timeoutMs = call.timeoutMs ?? 60_000;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  const onAbort = () => controller.abort();
+  call.signal?.addEventListener("abort", onAbort);
+  const started = Date.now();
+  let text = "";
+  let usage: TextStreamResult["usage"];
+
+  try {
+    const response = await fetch("https://api.openai.com/v1/responses", {
+      method: "POST",
+      signal: controller.signal,
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
+      body: JSON.stringify({
+        model,
+        store: false,
+        stream: true,
+        reasoning: { effort: call.effort || "low" },
+        input: call.prompt,
+      }),
+    });
+
+    if (!response.ok || !response.body) {
+      const payload: any = await response.json().catch(() => ({}));
+      throw new ProviderError("openai", response.status || 502, payload.error?.message || "OpenAI API request failed");
+    }
+
+    const decoder = new TextDecoder();
+    let buffer = "";
+    const handle = (block: string) => {
+      const data = block
+        .split("\n")
+        .filter((line) => line.startsWith("data:"))
+        .map((line) => line.slice(5).trim())
+        .join("");
+      if (!data || data === "[DONE]") return;
+      const event = JSON.parse(data);
+      if (event.type === "response.output_text.delta" && typeof event.delta === "string") {
+        text += event.delta;
+        onDelta(event.delta);
+      } else if (event.type === "response.completed") {
+        usage = { inputTokens: event.response?.usage?.input_tokens, outputTokens: event.response?.usage?.output_tokens };
+      } else if (event.type === "response.failed" || event.type === "error") {
+        const message = event.response?.error?.message || event.error?.message || event.message || "OpenAI stream failed";
+        throw new ProviderError("openai", 502, message);
+      }
+    };
+
+    for await (const chunk of response.body as unknown as AsyncIterable<Uint8Array>) {
+      buffer += decoder.decode(chunk, { stream: true });
+      let boundary = buffer.indexOf("\n\n");
+      while (boundary !== -1) {
+        handle(buffer.slice(0, boundary));
+        buffer = buffer.slice(boundary + 2);
+        boundary = buffer.indexOf("\n\n");
+      }
+    }
+    if (buffer.trim()) handle(buffer);
+
+    return { provider: "openai", model, text: text.trim(), latencyMs: Date.now() - started, usage };
+  } catch (error) {
+    if (error instanceof ProviderError) throw error;
+    if (controller.signal.aborted) {
+      throw new ProviderError("openai", 504, call.signal?.aborted ? "Request cancelled" : `OpenAI stream timed out after ${timeoutMs} ms`);
+    }
+    throw new ProviderError("openai", 502, error instanceof Error ? error.message : "OpenAI stream failed");
+  } finally {
+    clearTimeout(timeout);
+    call.signal?.removeEventListener("abort", onAbort);
   }
 };

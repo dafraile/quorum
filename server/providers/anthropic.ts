@@ -1,5 +1,12 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { ProviderError, type StructuredCall, type StructuredResult } from "./types.ts";
+import {
+  ProviderError,
+  type OnTextDelta,
+  type StructuredCall,
+  type StructuredResult,
+  type TextStreamCall,
+  type TextStreamResult,
+} from "./types.ts";
 
 export const anthropicDefaultModel = () => process.env.ANTHROPIC_MODEL || "claude-opus-5-5";
 
@@ -78,16 +85,66 @@ export const callAnthropicStructured = async (call: StructuredCall): Promise<Str
       },
     };
   } catch (error) {
-    if (error instanceof ProviderError) throw error;
-    if (error instanceof Anthropic.APIConnectionTimeoutError) {
-      throw new ProviderError("anthropic", 504, `Anthropic request timed out after ${timeoutMs} ms`);
+    throw toProviderError(error, timeoutMs);
+  }
+};
+
+const toProviderError = (error: unknown, timeoutMs: number) => {
+  if (error instanceof ProviderError) return error;
+  if (error instanceof Anthropic.APIUserAbortError) return new ProviderError("anthropic", 499, "Request cancelled");
+  if (error instanceof Anthropic.APIConnectionTimeoutError) {
+    return new ProviderError("anthropic", 504, `Anthropic request timed out after ${timeoutMs} ms`);
+  }
+  if (error instanceof Anthropic.RateLimitError) return new ProviderError("anthropic", 429, "Anthropic rate limit reached");
+  if (error instanceof Anthropic.APIError) return new ProviderError("anthropic", error.status ?? 502, error.message);
+  return new ProviderError("anthropic", 502, error instanceof Error ? error.message : "Anthropic request failed");
+};
+
+/** Streams plain text, calling onDelta per text chunk. A server-side fallback continues on the same stream. */
+export const streamAnthropicText = async (call: TextStreamCall, onDelta: OnTextDelta): Promise<TextStreamResult> => {
+  if (!anthropicConfigured()) {
+    throw new ProviderError("anthropic", 503, "ANTHROPIC_API_KEY is not configured");
+  }
+
+  const model = resolveModel(call.model);
+  const timeoutMs = call.timeoutMs ?? 60_000;
+  const started = Date.now();
+  let text = "";
+
+  try {
+    const stream = getClient().beta.messages.stream(
+      {
+        model,
+        max_tokens: 16000,
+        betas: ["server-side-fallback-2026-07-01"],
+        fallbacks: "default",
+        output_config: { effort: call.effort ?? "low" },
+        messages: [{ role: "user", content: call.prompt }],
+      },
+      { timeout: timeoutMs, signal: call.signal },
+    );
+
+    for await (const event of stream) {
+      if (event.type === "content_block_delta" && event.delta.type === "text_delta") {
+        text += event.delta.text;
+        onDelta(event.delta.text);
+      }
     }
-    if (error instanceof Anthropic.RateLimitError) {
-      throw new ProviderError("anthropic", 429, "Anthropic rate limit reached");
+
+    const message = await stream.finalMessage();
+    if (message.stop_reason === "refusal") {
+      const category = message.stop_details?.category ?? "unspecified";
+      throw new ProviderError("anthropic", 502, `Anthropic declined the request (category: ${category})`);
     }
-    if (error instanceof Anthropic.APIError) {
-      throw new ProviderError("anthropic", error.status ?? 502, error.message);
-    }
-    throw new ProviderError("anthropic", 502, error instanceof Error ? error.message : "Anthropic request failed");
+
+    return {
+      provider: "anthropic",
+      model: message.model,
+      text: text.trim(),
+      latencyMs: Date.now() - started,
+      usage: { inputTokens: message.usage.input_tokens, outputTokens: message.usage.output_tokens },
+    };
+  } catch (error) {
+    throw toProviderError(error, timeoutMs);
   }
 };

@@ -4,7 +4,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import type { AgentKey, StudyMode } from "../../shared/studyTypes.ts";
 
-export type StaticContribution = { answer: string; keyPoints: string[] };
+export type StaticContribution = { answer: string; keyPoints: string[]; hook?: string };
 
 export type StaticFloorFile = {
   caseId: string;

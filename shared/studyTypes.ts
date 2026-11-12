@@ -4,6 +4,9 @@ export type StudyProviderId = "openai" | "anthropic";
 export type StudyMode = "dyadic" | "triadic";
 export type FloorSource = "static" | "live";
 export type PlanStart = "prefilled" | "blank";
+/** How a card opens: a full paragraph, or a one-sentence hook that invites a conversation. */
+export type OpeningStyle = "paragraph" | "hook";
+export type Round = 1 | 2 | 3;
 export type Verdict = "accept" | "amend" | "reject";
 export type AgentKey = "intern" | "oldNurse" | "biblioRat" | "contrarian" | "patientAdvocate" | "oldGeezer";
 
@@ -12,6 +15,7 @@ export type SequenceItem = {
   mode: StudyMode;
   floorSource: FloorSource;
   planStart: PlanStart;
+  openingStyle: OpeningStyle;
 };
 
 export type ParticipantStatus = "created" | "in_progress" | "completed";
@@ -34,7 +38,7 @@ export type PatientMotionScript = {
   id: string;
   text: string;
   /** Fires when either threshold is reached (whichever comes first). */
-  trigger: { afterRulings?: number; afterSeconds?: number };
+  trigger: { afterInteractions?: number; afterSeconds?: number };
 };
 
 /** What the participant's browser may see of a case (no hidden script, no reference plan). */
@@ -60,8 +64,37 @@ export type Contribution = {
   agentId: AgentKey;
   answer: string;
   keyPoints: string[];
+  /** One sentence in the agent's voice that invites the Chair to ask more. */
+  hook: string;
   source: FloorSource;
 };
+
+/** One line of the proceedings, as the client sends it for debate and synthesis. */
+export type ProceedingLine = {
+  id: string;
+  round: Round;
+  speaker: AgentKey | "chair" | "patient";
+  /** Who a Chair line was addressed to. */
+  to?: AgentKey | "floor" | "patient";
+  text: string;
+};
+
+export type DebateStance = { agentId: AgentKey; stance: "challenges" | "backs"; point: string };
+
+export type DebateContribution = { agentId: AgentKey; statement: string; stances: DebateStance[] };
+
+export type Candidate = {
+  id: string;
+  origin: "pin" | "clerk";
+  agentIds: AgentKey[];
+  /** Verbatim words from the proceedings. */
+  quote: string;
+  /** The Clerk's one-line label, or empty for a pin. */
+  summary: string;
+  sourceLineId?: string;
+};
+
+export type ClerkProposal = { candidateId: string; verdict: Verdict; amendedText: string };
 
 export type PatientReply = { reply: string };
 

@@ -11,6 +11,7 @@ import type {
   ParticipantConfig,
   ParticipantStatus,
   PlanStart,
+  OpeningStyle,
   SequenceItem,
   StudyMode,
   StudyProviderId,
@@ -145,6 +146,8 @@ export type CreateParticipantInput = {
   floorSources?: FloorSource[];
   /** Per case position. Defaults: pilot -> one prefilled and one blank in random order; otherwise prefilled. */
   planStarts?: PlanStart[];
+  /** Per case position. Defaults: pilot -> one paragraph and one hook in random order; otherwise paragraph. */
+  openingStyles?: OpeningStyle[];
   /** Force one of the four counterbalanced sequences (0-3) instead of the next allocation. */
   allocation?: number;
 };
@@ -163,12 +166,15 @@ export const createParticipant = async (input: CreateParticipantInput): Promise<
   const floorSources = input.floorSources ?? ["static", "static"];
   const planStarts =
     input.planStarts ?? (pilot ? shuffle<PlanStart>(["prefilled", "blank"]) : ["prefilled", "prefilled"]);
+  const openingStyles =
+    input.openingStyles ?? (pilot ? shuffle<OpeningStyle>(["paragraph", "hook"]) : ["paragraph", "paragraph"]);
 
   const sequence: SequenceItem[] = sequenceTemplates[allocation].map((slot, position) => ({
     caseId: studyCases[slot.caseIndex].id,
     mode: slot.mode,
     floorSource: floorSources[position] ?? "static",
     planStart: planStarts[position] ?? "prefilled",
+    openingStyle: openingStyles[position] ?? "paragraph",
   }));
 
   const record: ParticipantRecord = {

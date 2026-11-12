@@ -41,3 +41,23 @@ export class ProviderError extends Error {
     this.status = status;
   }
 }
+
+export type TextStreamCall = {
+  provider: ProviderId;
+  model?: string;
+  prompt: string;
+  effort?: Effort;
+  timeoutMs?: number;
+  /** Aborts the upstream request, e.g. when the browser disconnects. */
+  signal?: AbortSignal;
+};
+
+export type TextStreamResult = {
+  provider: ProviderId;
+  model: string;
+  text: string;
+  latencyMs: number;
+  usage?: { inputTokens?: number; outputTokens?: number };
+};
+
+export type OnTextDelta = (text: string) => void;

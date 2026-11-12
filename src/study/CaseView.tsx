@@ -232,7 +232,7 @@ export function CaseView({ slot, caseIndex, caseCount, caseState, updateCase, on
       const next = slot.case.patientMotions.find(
         (motion) =>
           !current.firedPatientMotions.includes(motion.id) &&
-          ((motion.trigger.afterRulings !== undefined && ruled >= motion.trigger.afterRulings) ||
+          ((motion.trigger.afterInteractions !== undefined && ruled >= motion.trigger.afterInteractions) ||
             (motion.trigger.afterSeconds !== undefined && seconds >= motion.trigger.afterSeconds)),
       );
       if (!next) return;

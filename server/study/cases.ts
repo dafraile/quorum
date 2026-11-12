@@ -157,12 +157,12 @@ export const studyCases: StudyCase[] = [
         {
           id: "worse-than-before",
           text: "Doc, I feel worse than before I went into hospital. Is this just my heart getting worse?",
-          trigger: { afterRulings: 2, afterSeconds: 75 },
+          trigger: { afterInteractions: 2, afterSeconds: 75 },
         },
         {
           id: "all-these-tablets",
           text: "The hospital gave me a lot of new tablets. Do I really need all of them?",
-          trigger: { afterRulings: 5, afterSeconds: 180 },
+          trigger: { afterInteractions: 5, afterSeconds: 180 },
         },
       ],
     },
@@ -282,12 +282,12 @@ export const studyCases: StudyCase[] = [
         {
           id: "is-it-that-bad",
           text: "I have been trying, honestly. Is it really that bad?",
-          trigger: { afterRulings: 2, afterSeconds: 75 },
+          trigger: { afterInteractions: 2, afterSeconds: 75 },
         },
         {
           id: "stomach",
           text: "If you're adding something new, I'd rather not have anything that upsets my stomach more.",
-          trigger: { afterRulings: 5, afterSeconds: 180 },
+          trigger: { afterInteractions: 5, afterSeconds: 180 },
         },
       ],
     },
