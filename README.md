@@ -104,6 +104,19 @@ node --experimental-strip-types scripts/study-metrics.ts quorum-study-export.jso
 
 No participant identifiers are collected on the platform; participants are known by ID only (`T01…` pilot, `P01…` study).
 
+## Deploy (Fly.io, Sydney)
+
+One container (`Dockerfile`) serves the client and the API; study data goes to a volume mounted at `/data`. The deployed image sets `QUORUM_WORKBENCH=off`, which removes the unauthenticated workbench model routes; study routes always need a participant link token.
+
+```bash
+fly apps create quorum-chamber
+fly volumes create quorum_data --region syd --size 1 --app quorum-chamber
+fly secrets set --app quorum-chamber OPENAI_API_KEY=... ANTHROPIC_API_KEY=... STUDY_ADMIN_TOKEN=...
+fly deploy --ha=false
+```
+
+Participant links are then `https://quorum-chamber.fly.dev/study?t=<token>`, created from `/study/admin` on that deployment.
+
 ## Working Flow
 
 1. Choose Clinical or Thinking mode.

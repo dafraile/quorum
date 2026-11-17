@@ -1,0 +1,26 @@
+# Fly.io deployment (Sydney). One machine with one volume: study data lives on the volume at /data.
+# Secrets (never in this file): OPENAI_API_KEY, ANTHROPIC_API_KEY, STUDY_ADMIN_TOKEN.
+app = "quorum-chamber"
+primary_region = "syd"
+
+[build]
+
+[env]
+  STUDY_DATA_DIR = "/data"
+  QUORUM_WORKBENCH = "off"
+
+[mounts]
+  source = "quorum_data"
+  destination = "/data"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  # Keep the machine up during sessions: a stopped machine would drop streaming replies.
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

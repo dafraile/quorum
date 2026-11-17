@@ -1,0 +1,11 @@
+.git
+node_modules
+dist
+dist-server
+study-data
+artifacts
+.env
+.env.*
+*.tsbuildinfo
+.DS_Store
+fly.toml

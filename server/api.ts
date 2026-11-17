@@ -138,10 +138,16 @@ const handleClerk = postOnly(async (req, res) => {
   });
 });
 
+/**
+ * The workbench routes call the models without a participant token, so a public deployment turns them off
+ * (QUORUM_WORKBENCH=off); study routes always authenticate with the participant's link token.
+ */
+const workbenchRoutes: Record<string, ApiHandler> =
+  process.env.QUORUM_WORKBENCH === "off" ? {} : { "/api/agent": handleAgent, "/api/clerk": handleClerk };
+
 /** Exact-path API routes, shared by the Vite dev middleware and the production server. */
 export const apiRoutes: Record<string, ApiHandler> = {
   "/api/runtime": handleRuntime,
-  "/api/agent": handleAgent,
-  "/api/clerk": handleClerk,
+  ...workbenchRoutes,
   ...studyRoutes,
 };
