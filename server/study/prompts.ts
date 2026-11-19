@@ -1,5 +1,5 @@
 import { allStudyAgentIds, negativeAgentId, studyAgentById, type StudyAgentId } from "../../shared/studyRoster.ts";
-import type { ProceedingLine, Round, StudyMode } from "../../shared/studyTypes.ts";
+import type { ProceedingLine, Round, StudyMode, Verdict } from "../../shared/studyTypes.ts";
 import { agentResultSchema, buildAgentPrompt } from "../prompts.ts";
 import { renderRecord, type StudyCase } from "./cases.ts";
 
@@ -375,6 +375,54 @@ export const clerkChatSchema = (candidateIds: string[]) => ({
   },
   required: ["reply", "proposals"],
 });
+
+export const clerkSummarySchema = (minuteIds: string[]) => ({
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    overview: { type: "string" },
+    points: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          text: { type: "string" },
+          minuteIds: { type: "array", items: { type: "string", enum: minuteIds.length ? minuteIds : ["none"] } },
+        },
+        required: ["text", "minuteIds"],
+      },
+    },
+  },
+  required: ["overview", "points"],
+});
+
+export const buildClerkSummaryPrompt = (input: {
+  studyCase: StudyCase;
+  minutes: Array<{ id: string; agentIds: StudyAgentId[]; text: string; verdict: Verdict }>;
+}) => `You are the Clerk in Quorum. You keep the record. You have no clinical opinion, never argue and never advise.
+
+The Chair, a general practitioner, has sealed the Minutes: the points from the panel they chose to carry forward, some in part or in their own words. Write the summary the Chair will take into their final plan.
+
+Rules:
+- Restate only what the Minutes say. Add nothing: no new tests, drugs, doses, timings, reasons or warnings, and no judgement of your own.
+- Each point is one plan-ready line under 25 words, in the imperative where the Minute is an action ("Check standing blood pressure before changing diuretics"), or as a question or concern where the Minute is one ("Ask whether he is limiting his fluids").
+- Keep each Minute's hedges and conditions. Where the Chair carried a point in part, use only the part they kept.
+- Merge Minutes only when they say the same thing; list every Minute a point draws on in minuteIds. Every Minute appears in at least one point.
+- Keep the order of the Minutes. Do not name the panel members in the text.
+- overview: one or two neutral sentences saying what the Minutes cover.
+
+Case: ${input.studyCase.title}
+
+The sealed Minutes:
+${input.minutes
+  .map(
+    (item) =>
+      `[${item.id}] (${item.agentIds.map((id) => studyAgentById(id).name).join(" and ")}${item.verdict === "amend" ? ", carried in part" : ""}) "${item.text}"`,
+  )
+  .join("\n")}
+
+Return JSON with overview and points (text, minuteIds).`;
 
 export type ClerkChatInput = {
   studyCase: StudyCase;

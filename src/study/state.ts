@@ -54,16 +54,42 @@ export type Line = {
   at: string;
 };
 
-export type Pin = { id: string; sourceId: string; agentId: AgentKey; quote: string; round: Round; at: string };
+export type Pin = {
+  id: string;
+  sourceId: string;
+  agentId: AgentKey;
+  /** The panel member's words, verbatim: never changed. */
+  quote: string;
+  /** The Chair's own restatement of the point, if they edited it. */
+  wording?: string;
+  round: Round;
+  at: string;
+};
 
 export type Ruling = { verdict: Verdict; amendedText?: string; via: "chat" | "direct"; at: string };
 
 export type CandidateState = Candidate & {
+  /** For a pin the Chair restated: their wording, carried as an in-part ruling. */
+  wording?: string;
   ruling?: Ruling;
   proposed?: { verdict: Verdict; amendedText: string };
 };
 
 export type ClerkTurn = { id: string; speaker: "chair" | "clerk"; text: string; status?: "loading" | "error"; at: string };
+
+/** The Chair's plan as it evolves at the table; it starts as the locked pre-commitment. */
+export type WorkingPlan = { diagnosis: string; plan: string; notes: string; updatedAt?: string };
+
+export type SummaryPoint = { id: string; text: string; minuteIds: string[]; agentIds: AgentKey[] };
+
+export type FloorPoint = {
+  id: string;
+  /** What enters the final plan (the Clerk's line, or the Chair's edit of it). */
+  text: string;
+  /** The Clerk's line as written. */
+  original: string;
+  agentIds: AgentKey[];
+};
 
 export type CasePhase = "record" | "chamber" | "final" | "debrief";
 
@@ -88,10 +114,16 @@ export type CaseState = {
   candidatesStatus: "idle" | "loading" | "ready" | "error";
   candidatesError?: string;
   clerk: ClerkTurn[];
+  working?: WorkingPlan;
   minutesSealedAt?: string;
+  summary?: { status: "loading" | "ready" | "error"; overview: string; points: SummaryPoint[]; error?: string };
   final?: {
     diagnosis: string;
     plan: string;
+    /** The Clerk's summary points the Chair kept in the final plan (possibly edited). */
+    fromFloor?: FloorPoint[];
+    /** Summary points the Chair removed from the final plan. */
+    floorRemoved?: FloorPoint[];
     confidenceAfter: number;
     change: string;
     changeReason: string;
@@ -159,9 +191,23 @@ export const restoreSnapshot = (value: unknown): StudyState | null => {
       candidatesStatus: item.candidatesStatus === "loading" ? "error" : item.candidatesStatus,
       candidatesError: item.candidatesStatus === "loading" ? interrupted : item.candidatesError,
       clerk: item.clerk.filter((turn) => turn.status !== "loading"),
+      summary:
+        item.summary?.status === "loading" ? { ...item.summary, status: "error", error: interrupted } : item.summary,
     })),
   };
 };
+
+/** The Chair's current plan: the working plan if they have one, otherwise the locked pre-commitment. */
+export const workingOf = (caseState: CaseState): WorkingPlan =>
+  caseState.working ?? {
+    diagnosis: caseState.precommit?.diagnosis ?? "",
+    plan: caseState.precommit?.plan ?? "",
+    notes: "",
+  };
+
+/** How a pin reads to the panel and the Clerk: the verbatim words, plus the Chair's restatement if any. */
+export const pinLine = (pin: Pin) =>
+  `${studyAgentById(pin.agentId).shortName}: ${pin.quote}${pin.wording ? ` (the Chair's wording: ${pin.wording})` : ""}`;
 
 export const agentName = (id: AgentKey) => studyAgentById(id).name;
 

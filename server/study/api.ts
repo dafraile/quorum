@@ -12,6 +12,7 @@ import type {
   DebateStance,
   Debrief,
   FloorSource,
+  MinutesSummary,
   OpeningStyle,
   PlanStart,
   ProceedingLine,
@@ -26,11 +27,13 @@ import {
   buildChatPrompt,
   buildClerkCandidatesPrompt,
   buildClerkChatPrompt,
+  buildClerkSummaryPrompt,
   buildDebatePrompt,
   buildPatientPrompt,
   buildStudyOpeningPrompt,
   clerkCandidatesSchema,
   clerkChatSchema,
+  clerkSummarySchema,
   debateSchema,
   patientReplySchema,
   studyOpeningSchema,
@@ -596,6 +599,63 @@ const clerkChat = route("POST", async (req, res) => {
   }
 });
 
+/** After the Minutes are sealed: the Clerk restates them as plan-ready points, each traced to the Minutes it draws on. */
+const clerkSummary = route("POST", async (req, res) => {
+  const body = await readBody(req);
+  const record = await participantFor(body);
+  const { studyCase } = caseSlot(record, body.caseIndex);
+  const minutes = (Array.isArray(body.minutes) ? body.minutes : []).slice(0, 30).flatMap((item: any) =>
+    typeof item?.id === "string" && typeof item.text === "string" && item.text.trim() && verdicts.has(item.verdict)
+      ? [{ id: item.id.slice(0, 60), agentIds: agentList(item.agentIds), text: item.text.slice(0, 1500), verdict: item.verdict as Verdict }]
+      : [],
+  );
+  if (!minutes.length) {
+    send(res, 200, { overview: "Nothing was carried forward into the Minutes.", points: [] } satisfies MinutesSummary);
+    return;
+  }
+  const ids = minutes.map((item) => item.id);
+  const provider = clerkProvider();
+  try {
+    const result = await callStructured({
+      provider,
+      prompt: buildClerkSummaryPrompt({ studyCase, minutes }),
+      schemaName: "quorum_minutes_summary",
+      schema: clerkSummarySchema(ids),
+      effort: "low",
+      timeoutMs: 60_000,
+    });
+    const parsed = (result.parsed ?? {}) as { overview?: string; points?: unknown };
+    const points: MinutesSummary["points"] = (Array.isArray(parsed.points) ? parsed.points : []).flatMap((item: any, index: number) => {
+      const text = shortText(item?.text, 600).trim();
+      const minuteIds: string[] = Array.isArray(item?.minuteIds) ? [...new Set<string>(item.minuteIds.filter((id: unknown) => ids.includes(id as string)))] : [];
+      if (!text || !minuteIds.length) return [];
+      const agentIds = [...new Set(minuteIds.flatMap((id) => minutes.find((minute) => minute.id === id)?.agentIds ?? []))];
+      return [{ id: `sum-${index + 1}`, text, minuteIds, agentIds }];
+    });
+    // A Minute the Clerk dropped goes in as it was sealed, so nothing ruled in is lost.
+    const covered = new Set(points.flatMap((point) => point.minuteIds));
+    for (const minute of minutes) {
+      if (!covered.has(minute.id)) points.push({ id: `sum-${points.length + 1}`, text: minute.text, minuteIds: [minute.id], agentIds: minute.agentIds });
+    }
+    const summary: MinutesSummary = { overview: shortText(parsed.overview, 600).trim(), points };
+    await appendEvent(record.config.participantId, {
+      source: "server",
+      type: "minutes_summary",
+      caseIndex: body.caseIndex,
+      data: { minutes, summary, uncovered: minutes.filter((minute) => !covered.has(minute.id)).map((minute) => minute.id), provider: result.provider, model: result.model, latencyMs: result.latencyMs },
+    });
+    send(res, 200, summary);
+  } catch (error) {
+    await appendEvent(record.config.participantId, {
+      source: "server",
+      type: "llm_error",
+      caseIndex: body.caseIndex,
+      data: { target: "clerk_summary", provider, error: error instanceof Error ? error.message : String(error) },
+    });
+    throw error;
+  }
+});
+
 const patient = route("POST", async (req, res) => {
   const body = await readBody(req);
   const record = await participantFor(body);
@@ -770,6 +830,7 @@ export const studyRoutes: Record<string, Handler> = {
   "/api/study/debate": debate,
   "/api/study/clerk/candidates": clerkCandidates,
   "/api/study/clerk/chat": clerkChat,
+  "/api/study/clerk/summary": clerkSummary,
   "/api/study/debrief": debrief,
   "/api/study/complete": complete,
   "/api/study/admin/participants": adminParticipants,

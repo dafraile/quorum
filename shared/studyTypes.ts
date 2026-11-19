@@ -96,6 +96,15 @@ export type Candidate = {
 
 export type ClerkProposal = { candidateId: string; verdict: Verdict; amendedText: string };
 
+/** One sealed Minute as sent to the Clerk for its summary. */
+export type MinuteInput = { id: string; agentIds: AgentKey[]; text: string; verdict: Verdict };
+
+/** The Clerk's plan-ready restatement of the sealed Minutes: nothing added, every point traced to its Minutes. */
+export type MinutesSummary = {
+  overview: string;
+  points: Array<{ id: string; text: string; minuteIds: string[]; agentIds: AgentKey[] }>;
+};
+
 export type PatientReply = { reply: string };
 
 export type Debrief = {

@@ -5,6 +5,8 @@ import type {
   Contribution,
   DebateContribution,
   Debrief,
+  MinuteInput,
+  MinutesSummary,
   ProceedingLine,
   Round,
   SessionPayload,
@@ -135,6 +137,9 @@ export const fetchClerkReply = (input: {
   history: Array<{ speaker: "chair" | "clerk"; text: string }>;
   message: string;
 }) => post<{ reply: string; proposals: ClerkProposal[] }>("/api/study/clerk/chat", input, 70_000);
+
+export const fetchClerkSummary = (input: { caseIndex: number; minutes: MinuteInput[] }) =>
+  post<MinutesSummary>("/api/study/clerk/summary", input, 70_000);
 
 export const fetchPatientReply = (input: {
   caseIndex: number;

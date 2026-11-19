@@ -1,4 +1,4 @@
-import { ChevronLeft, ChevronRight, Pin as PinIcon, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Pencil, Pin as PinIcon, Trash2, X } from "lucide-react";
 import { type CSSProperties, type ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { cardBackArt, negativeAgentId, negativePanelLabel, studyAgentById } from "../../shared/studyRoster";
 import type { AgentKey, OpeningStyle, Verdict } from "../../shared/studyTypes";
@@ -656,27 +656,108 @@ function LineEntry({
 
 // ================================================================ carried-forward tray
 
-export function PinTray({ caseState, onUnpin }: { caseState: CaseState; onUnpin: (pin: Pin) => void }) {
-  const [open, setOpen] = useState(false);
+export function PinTray({
+  caseState,
+  onUnpin,
+  onEdit,
+}: {
+  caseState: CaseState;
+  onUnpin: (pin: Pin) => void;
+  onEdit: (pin: Pin, wording: string | undefined) => void;
+}) {
   const count = caseState.pins.length;
+  const [open, setOpen] = useState(false);
+  const [editing, setEditing] = useState<string>();
+  const [draft, setDraft] = useState("");
+  const previous = useRef(count);
+
+  // Show the tray whenever something new is carried forward, so a mistaken pin is easy to take back.
+  useEffect(() => {
+    if (count > previous.current) setOpen(true);
+    previous.current = count;
+  }, [count]);
+
+  const save = (pin: Pin) => {
+    const text = draft.trim();
+    onEdit(pin, text && text !== pin.quote ? text : undefined);
+    setEditing(undefined);
+  };
+
   return (
     <div className={`pin-tray ${open ? "open" : ""}`}>
       <button className="pin-tray-toggle" onClick={() => setOpen(!open)} aria-expanded={open}>
         <PinIcon size={15} /> Carrying forward <strong>{count}</strong>
       </button>
       {open && (
-        <div className="pin-tray-list">
+        <div className="pin-tray-list" role="region" aria-label="Carrying forward">
+          <div className="pin-tray-head">
+            <span>Carrying forward to the synthesis</span>
+            <button className="icon" onClick={() => setOpen(false)} aria-label="Close">
+              <X size={15} />
+            </button>
+          </div>
           {count === 0 ? (
             <p>Select words in any panel member's reply, or use “Carry forward”, to take a point into the synthesis.</p>
           ) : (
             <ul>
               {caseState.pins.map((pin) => (
                 <li key={pin.id}>
-                  <span className="pin-who">{studyAgentById(pin.agentId).shortName}</span>
-                  <span className="pin-quote">“{pin.quote}”</span>
-                  <button className="icon" onClick={() => onUnpin(pin)} aria-label="Stop carrying this forward">
-                    <X size={14} />
-                  </button>
+                  <span className="pin-who">
+                    {studyAgentById(pin.agentId).shortName}
+                    {pin.wording && <em> · in your words</em>}
+                  </span>
+                  {editing === pin.id ? (
+                    <div className="pin-edit">
+                      <textarea
+                        rows={3}
+                        value={draft}
+                        autoFocus
+                        onChange={(event) => setDraft(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter" && !event.shiftKey) {
+                            event.preventDefault();
+                            save(pin);
+                          }
+                          if (event.key === "Escape") setEditing(undefined);
+                        }}
+                      />
+                      <span className="pin-source">Their words stay on the record: “{pin.quote}”</span>
+                      <div className="pin-actions">
+                        <button className="brass" onClick={() => save(pin)}>
+                          Save
+                        </button>
+                        <button onClick={() => setEditing(undefined)}>Cancel</button>
+                        {pin.wording && (
+                          <button
+                            onClick={() => {
+                              onEdit(pin, undefined);
+                              setEditing(undefined);
+                            }}
+                          >
+                            Use their words
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <span className={`pin-quote ${pin.wording ? "reworded" : ""}`}>{pin.wording ?? `“${pin.quote}”`}</span>
+                      {pin.wording && <span className="pin-source">From: “{pin.quote}”</span>}
+                      <div className="pin-actions">
+                        <button
+                          onClick={() => {
+                            setEditing(pin.id);
+                            setDraft(pin.wording ?? pin.quote);
+                          }}
+                        >
+                          <Pencil size={13} /> Edit
+                        </button>
+                        <button onClick={() => onUnpin(pin)}>
+                          <Trash2 size={13} /> Remove
+                        </button>
+                      </div>
+                    </>
+                  )}
                 </li>
               ))}
             </ul>
@@ -754,6 +835,7 @@ export function Ledger({ slot, caseState, onRule, onRetry }: SynthesisProps) {
                 {negative && <span className="slip-negative">{negativePanelLabel}</span>}
               </div>
               {candidate.summary && <p className="slip-summary">{candidate.summary}</p>}
+              {candidate.wording && <p className="slip-wording">In your words: “{candidate.wording}”</p>}
               {partial === candidate.id ? (
                 <PartialPicker
                   quote={candidate.quote}
@@ -775,9 +857,18 @@ export function Ledger({ slot, caseState, onRule, onRetry }: SynthesisProps) {
               )}
               {partial !== candidate.id && (
                 <div className="slip-actions">
-                  <button onClick={() => onRule(candidate, "accept")} aria-pressed={candidate.ruling?.verdict === "accept"}>
-                    Carry forward
-                  </button>
+                  {candidate.wording ? (
+                    <button
+                      onClick={() => onRule(candidate, "amend", candidate.wording)}
+                      aria-pressed={candidate.ruling?.verdict === "amend" && candidate.ruling.amendedText === candidate.wording}
+                    >
+                      Carry in my words
+                    </button>
+                  ) : (
+                    <button onClick={() => onRule(candidate, "accept")} aria-pressed={candidate.ruling?.verdict === "accept"}>
+                      Carry forward
+                    </button>
+                  )}
                   <button onClick={() => setPartial(candidate.id)} aria-pressed={candidate.ruling?.verdict === "amend"}>
                     In part…
                   </button>
@@ -836,12 +927,13 @@ export function ClerkPaper({
   const unruled = caseState.candidates.filter((candidate) => !candidate.ruling).length;
   const busy = caseState.clerk.some((turn) => turn.status === "loading");
   const minutes = minutesOf(caseState);
-  const ready = caseState.candidatesStatus === "ready";
+  const sealed = Boolean(caseState.minutesSealedAt);
+  const ready = caseState.candidatesStatus === "ready" && !sealed;
 
   useEffect(() => {
     const body = bodyRef.current;
     if (body) body.scrollTop = body.scrollHeight;
-  }, [caseState.clerk.length, busy]);
+  }, [caseState.clerk.length, busy, sealed, caseState.summary?.status]);
 
   const submit = () => {
     const text = draft.trim();
@@ -873,6 +965,18 @@ export function ClerkPaper({
             <p className={turn.status === "loading" ? "streaming" : ""}>{turn.status === "loading" ? "Noting…" : turn.text}</p>
           </div>
         ))}
+        {sealed && (
+          <div className="entry agent">
+            <span className="entry-label">Clerk</span>
+            <p>
+              {caseState.summary?.status === "ready"
+                ? `The Minutes are sealed with ${minutes.length} ${minutes.length === 1 ? "point" : "points"}. My summary is on the table: check it says only what you carried forward, then take it into your final plan.`
+                : caseState.summary?.status === "error"
+                  ? "I could not write the summary. Try again on the table, or reopen the rulings."
+                  : "The Minutes are sealed. I am writing them up for your plan…"}
+            </p>
+          </div>
+        )}
         {proposals > 0 && (
           <div className="proposal-bar">
             <p>
@@ -908,14 +1012,22 @@ export function ClerkPaper({
           </button>
         </div>
         <div className="seal-row">
-          {sealing ? (
+          {sealed ? (
+            <p className="seal-done">Sealed. Read the Clerk's summary on the table.</p>
+          ) : sealing ? (
             <>
               <p>
                 {unruled > 0 ? `${unruled} not ruled on will be left out. ` : ""}Seal the Minutes with {minutes.length}{" "}
-                {minutes.length === 1 ? "point" : "points"}?
+                {minutes.length === 1 ? "point" : "points"}? The Clerk will summarise them for your final plan.
               </p>
               <div className="slip-actions">
-                <button className="brass" onClick={onSeal}>
+                <button
+                  className="brass"
+                  onClick={() => {
+                    setSealing(false);
+                    onSeal();
+                  }}
+                >
                   Seal the Minutes
                 </button>
                 <button onClick={() => setSealing(false)}>Not yet</button>
@@ -923,7 +1035,7 @@ export function ClerkPaper({
             </>
           ) : (
             <button className="seal" disabled={!ready || proposals > 0} onClick={() => setSealing(true)}>
-              Seal the Minutes and record my final plan
+              Seal the Minutes
             </button>
           )}
         </div>

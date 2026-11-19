@@ -1,4 +1,4 @@
-import { BookOpen, X } from "lucide-react";
+import { BookOpen, NotebookPen, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { negativeAgentId, studyAgentById } from "../../shared/studyRoster";
 import type { AgentKey, Debrief, Round, Verdict } from "../../shared/studyTypes";
@@ -6,6 +6,7 @@ import {
   StudyApiError,
   fetchClerkCandidates,
   fetchClerkReply,
+  fetchClerkSummary,
   fetchContribution,
   fetchDebate,
   fetchDebrief,
@@ -17,6 +18,7 @@ import {
 } from "./api";
 import { ClerkPaper, Ledger, Paper, PinTray, Table, listNames } from "./Chamber";
 import { changeOptions, confidenceOptions } from "./content";
+import { FinalPlanView, FloorPointsEditor, SummarySheet, WorkingPlanEditor, WorkingPlanView } from "./Plan";
 import {
   activeAgents,
   createId,
@@ -24,6 +26,7 @@ import {
   minutesOf,
   now,
   patientUtterances,
+  pinLine,
   proceedingsOf,
   questionsLeft,
   roundBudget,
@@ -31,13 +34,16 @@ import {
   secondsSince,
   threadFor,
   verdictLabels,
+  workingOf,
   type CandidateState,
   type CaseSlot,
   type CaseState,
+  type FloorPoint,
   type Line,
   type Opening,
   type Pin,
   type Seat,
+  type WorkingPlan,
 } from "./state";
 
 type CaseViewProps = {
@@ -110,6 +116,7 @@ export function CaseView({ slot, caseIndex, caseCount, caseState, updateCase, on
     updateCase((current) => ({
       ...current,
       precommit: { ...precommit, at: openedAt },
+      working: { diagnosis: precommit.diagnosis, plan: precommit.plan, notes: "" },
       phase: "chamber",
       round: 1,
       floorOpenedAt: openedAt,
@@ -364,7 +371,25 @@ export function CaseView({ slot, caseIndex, caseCount, caseState, updateCase, on
 
   const unpin = (item: Pin) => {
     updateCase((state) => ({ ...state, pins: state.pins.filter((pinItem) => pinItem.id !== item.id) }));
-    void log("pin_removed", { pinId: item.id, agentId: item.agentId, round: stateRef.current.round });
+    void log("pin_removed", { pinId: item.id, agentId: item.agentId, quote: item.quote, wording: item.wording, round: stateRef.current.round });
+  };
+
+  const editPin = (item: Pin, wording: string | undefined) => {
+    updateCase((state) => ({ ...state, pins: state.pins.map((pinItem) => (pinItem.id === item.id ? { ...pinItem, wording } : pinItem)) }));
+    void log("pin_edited", { pinId: item.id, agentId: item.agentId, quote: item.quote, wording, previousWording: item.wording, round: stateRef.current.round });
+  };
+
+  // ------------------------------------------------------------ the Chair's working plan
+
+  const saveWorking = (next: WorkingPlan, where: "drawer" | "between-rounds") => {
+    const current = stateRef.current;
+    const before = workingOf(current);
+    const changed = (["diagnosis", "plan", "notes"] as const).filter((key) => next[key] !== before[key]);
+    if (!changed.length) return;
+    const working = { diagnosis: next.diagnosis, plan: next.plan, notes: next.notes, updatedAt: now() };
+    stateRef.current = { ...current, working };
+    updateCase((state) => ({ ...state, working }));
+    void log("plan_revised", { round: current.round, where, changed, diagnosis: working.diagnosis, plan: working.plan, notes: working.notes });
   };
 
   // ------------------------------------------------------------ round 2: the debate
@@ -378,7 +403,7 @@ export function CaseView({ slot, caseIndex, caseCount, caseState, updateCase, on
         agentId,
         others: activeAgents(current).filter((id) => id !== agentId),
         proceedings: proceedingsOf(current, style, 1),
-        pinned: current.pins.map((item) => `${studyAgentById(item.agentId).shortName}: ${item.quote}`),
+        pinned: current.pins.map(pinLine),
         patientUtterances: slot.mode === "triadic" ? patientUtterances(current) : undefined,
         requestId: lineId,
       });
@@ -409,7 +434,15 @@ export function CaseView({ slot, caseIndex, caseCount, caseState, updateCase, on
   // ------------------------------------------------------------ round 3: synthesis with the Clerk
 
   const pinCandidates = (current: CaseState): CandidateState[] =>
-    current.pins.map((item) => ({ id: `pin-${item.id}`, origin: "pin", agentIds: [item.agentId], quote: item.quote, summary: "", sourceLineId: item.sourceId }));
+    current.pins.map((item) => ({
+      id: `pin-${item.id}`,
+      origin: "pin",
+      agentIds: [item.agentId],
+      quote: item.quote,
+      summary: "",
+      wording: item.wording,
+      sourceLineId: item.sourceId,
+    }));
 
   const gatherCandidates = async () => {
     const current = stateRef.current;
@@ -420,9 +453,9 @@ export function CaseView({ slot, caseIndex, caseCount, caseState, updateCase, on
         proceedings: proceedingsOf(current, style, 2),
         pinned: current.pins.map((item) => ({ agentId: item.agentId, quote: item.quote })),
       });
-      const all = [...pinCandidates(current), ...candidates];
+      const all: CandidateState[] = [...pinCandidates(current), ...candidates];
       updateCase((state) => ({ ...state, candidatesStatus: "ready", candidates: all }));
-      void log("candidates_shown", { candidates: all.map(({ id, origin, agentIds, quote, summary }) => ({ id, origin, agentIds, quote, summary })) });
+      void log("candidates_shown", { candidates: all.map(({ id, origin, agentIds, quote, summary, wording }) => ({ id, origin, agentIds, quote, summary, wording })) });
     } catch (error) {
       updateCase((state) => ({ ...state, candidatesStatus: "error", candidatesError: error instanceof Error ? error.message : "Could not gather" }));
     }
@@ -468,8 +501,9 @@ export function CaseView({ slot, caseIndex, caseCount, caseState, updateCase, on
         caseIndex,
         message: text,
         history: current.clerk.filter((turn) => !turn.status).map((turn) => ({ speaker: turn.speaker, text: turn.text })),
-        candidates: current.candidates.map(({ ruling, proposed: _proposed, ...item }) => ({
+        candidates: current.candidates.map(({ ruling, proposed: _proposed, wording, ...item }) => ({
           ...item,
+          summary: item.summary || (wording ? `The Chair's own wording: ${wording}` : ""),
           ruling: ruling ? `${verdictLabels[ruling.verdict]}${ruling.amendedText ? `: "${ruling.amendedText}"` : ""}` : undefined,
         })),
       });
@@ -505,10 +539,35 @@ export function CaseView({ slot, caseIndex, caseCount, caseState, updateCase, on
     void log("proposals_discarded", { count });
   };
 
+  const summarise = async () => {
+    const minutes = minutesOf(stateRef.current);
+    updateCase((state) => ({ ...state, summary: { status: "loading", overview: "", points: [] } }));
+    try {
+      const result = await fetchClerkSummary({ caseIndex, minutes });
+      updateCase((state) => ({ ...state, summary: { status: "ready", overview: result.overview, points: result.points } }));
+      void log("summary_shown", { overview: result.overview, points: result.points });
+    } catch (error) {
+      updateCase((state) => ({
+        ...state,
+        summary: { status: "error", overview: "", points: [], error: error instanceof Error ? error.message : "Could not summarise" },
+      }));
+    }
+  };
+
+  const reopenRulings = () => {
+    updateCase((state) => ({ ...state, minutesSealedAt: undefined, summary: undefined }));
+    void log("minutes_reopened", { summaryStatus: stateRef.current.summary?.status });
+  };
+
+  const toFinal = () => {
+    updateCase((state) => ({ ...state, phase: "final" }));
+    void log("final_opened", { summaryPoints: stateRef.current.summary?.points.length ?? 0 });
+  };
+
   const sealMinutes = () => {
     const current = stateRef.current;
     const minutes = minutesOf(current);
-    updateCase((state) => ({ ...state, minutesSealedAt: now(), phase: "final" }));
+    updateCase((state) => ({ ...state, minutesSealedAt: now() }));
     void log("minutes_sealed", {
       minutes,
       accepted: current.candidates.filter((item) => item.ruling?.verdict === "accept").length,
@@ -519,6 +578,7 @@ export function CaseView({ slot, caseIndex, caseCount, caseState, updateCase, on
       secondsInSynthesis: secondsSince(current.roundStartedAt[3]),
       secondsOnFloor: secondsSince(current.floorOpenedAt),
     });
+    void summarise();
   };
 
   // ------------------------------------------------------------ final plan and debrief
@@ -534,6 +594,10 @@ export function CaseView({ slot, caseIndex, caseCount, caseState, updateCase, on
       precommit: current.precommit,
       diagnosisChanged: final.diagnosis.trim() !== (current.precommit?.diagnosis ?? "").trim(),
       planChanged: final.plan.trim() !== (current.precommit?.plan ?? "").trim(),
+      working: current.working,
+      fromFloorKept: final.fromFloor?.length ?? 0,
+      fromFloorEdited: final.fromFloor?.filter((point) => point.text !== point.original).length ?? 0,
+      fromFloorRemoved: final.floorRemoved?.length ?? 0,
     });
     updateCase((state) => ({ ...state, phase: "debrief", debriefOpenedAt: now() }));
   };
@@ -564,6 +628,8 @@ export function CaseView({ slot, caseIndex, caseCount, caseState, updateCase, on
         onHear={hearOut}
         onPin={pin}
         onUnpin={unpin}
+        onEditPin={editPin}
+        onSaveWorking={saveWorking}
         onRetryLine={retryLine}
         onRetryOpening={retryOpening}
         onPutPatientMotion={putPatientMotion}
@@ -576,6 +642,9 @@ export function CaseView({ slot, caseIndex, caseCount, caseState, updateCase, on
         onConfirm={confirmProposals}
         onDiscard={discardProposals}
         onSeal={sealMinutes}
+        onRetrySummary={() => void summarise()}
+        onReopen={reopenRulings}
+        onToFinal={toFinal}
       />
     );
   }
@@ -617,6 +686,8 @@ type ChamberProps = {
   onHear: (agentId: AgentKey) => void;
   onPin: (sourceId: string, agentId: AgentKey, quote: string) => void;
   onUnpin: (pin: Pin) => void;
+  onEditPin: (pin: Pin, wording: string | undefined) => void;
+  onSaveWorking: (next: WorkingPlan, where: "drawer" | "between-rounds") => void;
   onRetryLine: (lineId: string) => void;
   onRetryOpening: (agentId: AgentKey) => void;
   onPutPatientMotion: () => void;
@@ -629,11 +700,14 @@ type ChamberProps = {
   onConfirm: () => void;
   onDiscard: () => void;
   onSeal: () => void;
+  onRetrySummary: () => void;
+  onReopen: () => void;
+  onToFinal: () => void;
 };
 
 function Chamber(props: ChamberProps) {
   const { slot, caseState } = props;
-  const [recordOpen, setRecordOpen] = useState(false);
+  const [drawer, setDrawer] = useState<"plan" | "record">();
   const [confirmRound, setConfirmRound] = useState(false);
   const left = questionsLeft(caseState);
   const busy = caseState.lines.some((line) => line.status === "streaming");
@@ -668,8 +742,11 @@ function Chamber(props: ChamberProps) {
             <span className="tokens-label">{left} left</span>
           </div>
         )}
-        <button className="rail-record" onClick={() => setRecordOpen(true)}>
-          <BookOpen size={16} /> Record and my plan
+        <button className="rail-record" onClick={() => setDrawer("plan")} aria-pressed={drawer === "plan"}>
+          <NotebookPen size={16} /> My plan and notes
+        </button>
+        <button className="rail-record" onClick={() => setDrawer("record")} aria-pressed={drawer === "record"}>
+          <BookOpen size={16} /> Patient record
         </button>
       </div>
 
@@ -690,44 +767,69 @@ function Chamber(props: ChamberProps) {
               </div>
             )}
             <div className="stage-foot">
-              <PinTray caseState={caseState} onUnpin={props.onUnpin} />
+              <PinTray caseState={caseState} onUnpin={props.onUnpin} onEdit={props.onEditPin} />
               <div className="advance">
                 {caseState.round === 2 && caseState.debateStatus === "loading" && <span className="advance-note">The panel is reading round 1…</span>}
-                {confirmRound ? (
-                  <>
-                    <span className="advance-note">
-                      {caseState.round === 1
-                        ? "Every panel member will read your conversations and argue them out. You cannot return to round 1."
-                        : "The Clerk will gather the points for your rulings. Questions to the panel close."}
-                    </span>
-                    <button className="brass" disabled={busy} onClick={advance}>
-                      {advanceLabel}
-                    </button>
-                    <button onClick={() => setConfirmRound(false)}>Not yet</button>
-                  </>
-                ) : (
-                  <button
-                    className="brass big"
-                    disabled={!openingsReady || busy || (caseState.round === 2 && caseState.debateStatus !== "ready")}
-                    onClick={() => setConfirmRound(true)}
-                  >
-                    {advanceLabel}
-                  </button>
-                )}
+                <button
+                  className="brass big"
+                  disabled={!openingsReady || busy || (caseState.round === 2 && caseState.debateStatus !== "ready")}
+                  onClick={() => {
+                    setDrawer(undefined);
+                    setConfirmRound(true);
+                  }}
+                >
+                  {advanceLabel}
+                </button>
               </div>
             </div>
           </>
+        ) : caseState.minutesSealedAt ? (
+          <SummarySheet caseState={caseState} onRetry={props.onRetrySummary} onReopen={props.onReopen} onToFinal={props.onToFinal} />
         ) : (
           <Ledger slot={slot} caseState={caseState} onRule={props.onRule} onRetry={props.onRetryCandidates} />
         )}
 
-        {recordOpen && (
-          <div className="drawer" role="dialog" aria-label="Record and your locked plan">
-            <button className="icon drawer-close" onClick={() => setRecordOpen(false)} aria-label="Close">
+        {confirmRound && caseState.round < 3 && (
+          <div className="between" role="dialog" aria-label="Between rounds">
+            <div className="between-sheet">
+              <span className="rail-step">Between rounds</span>
+              <h2>{caseState.round === 1 ? "Before the debate" : "Before the synthesis"}</h2>
+              <p>
+                {caseState.round === 1
+                  ? "Every panel member will read your conversations and argue them out. You cannot return to round 1."
+                  : "The Clerk will gather the points for your rulings, and questions to the panel close."}{" "}
+                Take a moment to update your working plan or add notes.
+              </p>
+              <WorkingPlanEditor working={workingOf(caseState)} onSave={(next) => props.onSaveWorking(next, "between-rounds")} />
+              <div className="slip-actions">
+                <button className="brass big" disabled={busy} onClick={advance}>
+                  {advanceLabel}
+                </button>
+                <button onClick={() => setConfirmRound(false)}>Back to the table</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {drawer && (
+          <div className="drawer" role="dialog" aria-label={drawer === "plan" ? "Your plan and notes" : "The patient record"}>
+            <button className="icon drawer-close" onClick={() => setDrawer(undefined)} aria-label="Close">
               <X size={18} />
             </button>
-            <LockedPlan caseState={caseState} />
-            <RecordView slot={slot} />
+            {drawer === "plan" ? (
+              <>
+                <section className="locked-plan working-edit">
+                  <h2>My working plan</h2>
+                  <WorkingPlanEditor working={workingOf(caseState)} onSave={(next) => props.onSaveWorking(next, "drawer")} />
+                </section>
+                <LockedPlan caseState={caseState} />
+              </>
+            ) : (
+              <>
+                <RecordView slot={slot} />
+                <LockedPlan caseState={caseState} />
+              </>
+            )}
           </div>
         )}
       </section>
@@ -842,19 +944,28 @@ function PrecommitForm({ slot, onSubmit }: { slot: CaseSlot; onSubmit: (value: {
 
 function FinalForm({ slot, caseState, onSubmit }: { slot: CaseSlot; caseState: CaseState; onSubmit: (value: NonNullable<CaseState["final"]>) => Promise<void> }) {
   const prefilled = slot.planStart === "prefilled";
+  const working = workingOf(caseState);
+  const workingChanged =
+    Boolean(caseState.working?.updatedAt) &&
+    (working.diagnosis !== caseState.precommit?.diagnosis || working.plan !== caseState.precommit?.plan || working.notes.trim() !== "");
   const [saving, setSaving] = useState(false);
-  const [diagnosis, setDiagnosis] = useState(prefilled ? caseState.precommit?.diagnosis ?? "" : "");
-  const [plan, setPlan] = useState(prefilled ? caseState.precommit?.plan ?? "" : "");
+  const [diagnosis, setDiagnosis] = useState(prefilled ? working.diagnosis : "");
+  const [plan, setPlan] = useState(prefilled ? working.plan : "");
+  const [floor, setFloor] = useState<FloorPoint[]>(() =>
+    (caseState.summary?.points ?? []).map((point) => ({ id: point.id, text: point.text, original: point.text, agentIds: point.agentIds })),
+  );
+  const [floorRemoved, setFloorRemoved] = useState<FloorPoint[]>([]);
   const [confidenceAfter, setConfidenceAfter] = useState<number>();
   const [change, setChange] = useState<number>();
   const [changeReason, setChangeReason] = useState("");
   const minutes = minutesOf(caseState);
-  const ready = diagnosis.trim() && plan.trim() && confidenceAfter && change;
+  const ready = diagnosis.trim() && (plan.trim() || floor.length > 0) && confidenceAfter && change;
 
   return (
     <div className="record-layout">
       <div className="side-stack">
         <LockedPlan caseState={caseState} />
+        {workingChanged && <WorkingPlanView working={working} />}
         <section className="minutes">
           <h2>The Minutes</h2>
           {minutes.length ? (
@@ -875,15 +986,32 @@ function FinalForm({ slot, caseState, onSubmit }: { slot: CaseSlot; caseState: C
 
       <section className="form-sheet">
         <h2>Your final diagnosis and plan</h2>
-        <p>{prefilled ? "This starts from what you recorded before the panel spoke. Change it as you see fit." : "Write your final working diagnosis and plan."}</p>
+        <p>
+          {prefilled
+            ? "This starts from your working plan. The Clerk's summary of your Minutes is in the plan, marked as from the Floor. Keep, edit or remove each point, and change the rest as you see fit."
+            : "Write your final working diagnosis and plan. The Clerk's summary of your Minutes is already in the plan, marked as from the Floor. Keep, edit or remove each point."}
+        </p>
         <label className="field">
           Working diagnosis
           <textarea rows={3} value={diagnosis} onChange={(event) => setDiagnosis(event.target.value)} />
         </label>
-        <label className="field">
-          Plan
-          <textarea rows={6} value={plan} onChange={(event) => setPlan(event.target.value)} />
-        </label>
+        <div className="field">
+          <span>Plan</span>
+          <div className="plan-composite">
+            <FloorPointsEditor
+              points={floor}
+              removed={floorRemoved}
+              onChange={(points, removed) => {
+                setFloor(points);
+                setFloorRemoved(removed);
+              }}
+            />
+            <label className="own-plan-label">
+              <span className="own-plan-tag">Your plan</span>
+              <textarea rows={6} value={plan} onChange={(event) => setPlan(event.target.value)} />
+            </label>
+          </div>
+        </div>
         <fieldset className="field">
           <legend>After ruling on the panel's contributions, how confident are you in your final diagnosis and plan?</legend>
           <Scale name="confidence-after" options={confidenceOptions} value={confidenceAfter} onChange={setConfidenceAfter} />
@@ -904,6 +1032,8 @@ function FinalForm({ slot, caseState, onSubmit }: { slot: CaseSlot; caseState: C
             void onSubmit({
               diagnosis: diagnosis.trim(),
               plan: plan.trim(),
+              fromFloor: floor.map((point) => ({ ...point, text: point.text.trim() })),
+              floorRemoved,
               confidenceAfter: confidenceAfter!,
               change: changeOptions[change! - 1],
               changeReason: changeReason.trim(),
@@ -986,6 +1116,13 @@ function DebriefView({ caseIndex, caseState, isLast, onContinue }: { caseIndex: 
               Your rulings on its points: {negativeRulings.map((item) => (item.ruling ? verdictLabels[item.ruling.verdict].toLowerCase() : "not ruled on")).join(", ")}.
             </p>
           )}
+        </div>
+      )}
+
+      {caseState.final && (
+        <div className="debrief-final">
+          <h3>Your final plan</h3>
+          <FinalPlanView final={caseState.final} />
         </div>
       )}
 

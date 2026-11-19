@@ -61,6 +61,8 @@ for (const { participant, events } of data.participants) {
     const inRound = (round: number) => chairMotions.filter((event) => event.data.round === round);
     const pinsAdded = of("pin_added", caseIndex).length;
     const pinsRemoved = of("pin_removed", caseIndex).length;
+    const revisions = of("plan_revised", caseIndex);
+    const summary = of("summary_shown", caseIndex).at(-1)?.data;
 
     const patientReplies = of("patient_reply", caseIndex);
     const disclosed = [...new Set(patientReplies.flatMap((event) => event.data.disclosed ?? []))];
@@ -91,6 +93,12 @@ for (const { participant, events } of data.participants) {
       questionsToOneMember: chairMotions.filter((event) => event.data.target !== "floor").length,
       hooksOpened: of("hook_opened", caseIndex).length,
       pinsKept: pinsAdded - pinsRemoved,
+      pinsRemoved,
+      pinsReworded: of("pin_edited", caseIndex).filter((event) => event.data.wording).length,
+      planRevisions: revisions.length,
+      planRevisionsBetweenRounds: revisions.filter((event) => event.data.where === "between-rounds").length,
+      planFieldsRevised: [...new Set(revisions.flatMap((event) => event.data.changed ?? []))],
+      notesWritten: Boolean(final?.working?.notes?.trim()),
       candidates: of("candidates_shown", caseIndex).at(-1)?.data?.candidates?.length,
       itemsRuled: rulings.length,
       accepted: count("accept"),
@@ -115,6 +123,14 @@ for (const { participant, events } of data.participants) {
       precommitDiagnosis: precommit?.diagnosis,
       precommitPlan: precommit?.plan,
       minutes: (sealed?.minutes ?? []).map((item: any) => item.text),
+      minutesReopened: of("minutes_reopened", caseIndex).length,
+      summaryPoints: summary?.points?.length,
+      floorPointsKept: final?.fromFloorKept,
+      floorPointsEdited: final?.fromFloorEdited,
+      floorPointsRemoved: final?.fromFloorRemoved,
+      finalFromFloor: (final?.fromFloor ?? []).map((point: any) => point.text),
+      workingPlan: final?.working?.plan,
+      workingNotes: final?.working?.notes,
       finalDiagnosis: final?.diagnosis,
       finalPlan: final?.plan,
       changeReason: final?.changeReason,
