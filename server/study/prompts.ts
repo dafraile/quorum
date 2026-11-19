@@ -236,7 +236,7 @@ ${thread}
 
 ${ask}
 
-Reply in plain text, in your own voice, in under 70 words unless the Chair asks for more. Speak to the Chair directly. No headings, lists or markdown.`;
+Reply in your own voice, speaking to the Chair directly, in under 70 words unless the Chair asks for more. Write two to four short points, each on its own line starting with "• ", each under 20 words. Put your single most important point first. No headings, bold or other markdown.`;
 };
 
 export const debateSchema = (selfId: StudyAgentId, others: StudyAgentId[]) => ({

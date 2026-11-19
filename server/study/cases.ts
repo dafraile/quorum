@@ -1,7 +1,7 @@
 // Synthetic pilot cases. Server-side only: the patient script's concealed items and
 // the CI reference plan must never be sent to the participant's browser before debrief.
 // Reference assessments/plans are DRAFTS for the CI (a practising GP) to rewrite.
-import type { PatientMotionScript, PublicCase, RecordSection } from "../../shared/studyTypes.ts";
+import type { Glance, PatientMotionScript, PublicCase, RecordSection } from "../../shared/studyTypes.ts";
 
 export type ConcealedItem = {
   id: string;
@@ -18,6 +18,7 @@ export type StudyCase = {
   title: string;
   patientLabel: string;
   record: RecordSection[];
+  glance?: Glance;
   motion: string;
   patient: {
     persona: string;
@@ -114,6 +115,58 @@ export const studyCases: StudyCase[] = [
         ],
       },
     ],
+    glance: {
+      facts: [
+        "77, male; lives with his wife",
+        "Home 10 days after a heart failure admission (HFrEF, LVEF 35%)",
+        "New at discharge: furosemide 80 mg, spironolactone, empagliflozin",
+        "AF on apixaban; type 2 diabetes; CKD 3b; hypertension",
+        "Today: tired, dizzy, a bit muddled; BP 104/62; HR 68 irregular",
+        "Repeat UEC asked for at discharge: not done",
+      ],
+      labs: [
+        {
+          label: "Weight",
+          unit: "kg",
+          altUnit: "lb",
+          points: [
+            { when: "admission", value: 87.5, alt: 192.9 },
+            { when: "discharge", value: 82.0, alt: 180.8 },
+            { when: "today", value: 78.6, alt: 173.3 },
+          ],
+        },
+        {
+          label: "Creatinine",
+          unit: "µmol/L",
+          altUnit: "mg/dL",
+          points: [
+            { when: "4 months ago", value: 132, alt: 1.49 },
+            { when: "discharge", value: 148, alt: 1.67 },
+          ],
+          note: "No result since discharge",
+        },
+        {
+          label: "eGFR",
+          unit: "mL/min/1.73 m²",
+          points: [
+            { when: "4 months ago", value: 44 },
+            { when: "discharge", value: 38 },
+          ],
+        },
+        {
+          label: "Potassium",
+          unit: "mmol/L",
+          altUnit: "mEq/L",
+          points: [{ when: "discharge", value: 5.1, alt: 5.1 }],
+        },
+        {
+          label: "Sodium",
+          unit: "mmol/L",
+          altUnit: "mEq/L",
+          points: [{ when: "discharge", value: 134, alt: 134 }],
+        },
+      ],
+    },
     motion:
       "Mr T, 77, ten days after discharge for heart failure, is more tired, dizzy and at times muddled. What is going on, and what needs doing today?",
     patient: {
@@ -241,6 +294,42 @@ export const studyCases: StudyCase[] = [
         ],
       },
     ],
+    glance: {
+      facts: [
+        "54, female; shift work; lives with her partner and adult son",
+        "Type 2 diabetes since 2020; hypertension; depression (stable); BMI 34",
+        "Metformin 1000 mg bd, gliclazide MR 60 mg mane, perindopril, atorvastatin, sertraline",
+        "Today: BP 136/84; weight 94 kg (stable); eGFR > 90",
+        "Dietitian referral not attended; prefers tablets over injections",
+      ],
+      labs: [
+        {
+          label: "HbA1c",
+          unit: "%",
+          altUnit: "mmol/mol",
+          points: [
+            { when: "12 months ago", value: 7.4, alt: 57 },
+            { when: "6 months ago", value: 8.2, alt: 66 },
+            { when: "this week", value: 9.1, alt: 76 },
+          ],
+        },
+        {
+          label: "Urine ACR",
+          unit: "mg/mmol",
+          altUnit: "mg/g",
+          points: [
+            { when: "a year ago", value: 2.9, alt: 25.6 },
+            { when: "this week", value: 4.2, alt: 37.1 },
+          ],
+        },
+        {
+          label: "LDL cholesterol",
+          unit: "mmol/L",
+          altUnit: "mg/dL",
+          points: [{ when: "this week", value: 2.1, alt: 81 }],
+        },
+      ],
+    },
     motion:
       "Ms L, 54: HbA1c has risen to 9.1% on metformin and gliclazide. What is the next step in managing her diabetes?",
     patient: {
@@ -315,6 +404,7 @@ export const publicCase = (item: StudyCase, includePatientMotions: boolean): Pub
   title: item.title,
   patientLabel: item.patientLabel,
   record: item.record,
+  glance: item.glance,
   motion: item.motion,
   patientMotions: includePatientMotions ? item.patient.motions : [],
 });

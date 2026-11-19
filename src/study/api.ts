@@ -22,7 +22,22 @@ export class StudyApiError extends Error {
   }
 }
 
+/** A server that is restarting or waking answers 502/503 or refuses the connection for a moment: worth one or two retries. */
+const transient = (error: unknown) => error instanceof StudyApiError && (error.status === 0 || error.status === 502 || error.status === 503);
+const pause = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
+
 const post = async <T>(path: string, body: Record<string, unknown>, timeoutMs = 90_000): Promise<T> => {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return await postOnce<T>(path, body, timeoutMs);
+    } catch (error) {
+      if (attempt >= 3 || !transient(error)) throw error;
+      await pause(1500 * attempt);
+    }
+  }
+};
+
+const postOnce = async <T>(path: string, body: Record<string, unknown>, timeoutMs: number): Promise<T> => {
   const controller = new AbortController();
   const timer = window.setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -69,6 +84,22 @@ export type ChatRequest = {
 
 /** Streams a panel member's reply. Calls onDelta with each text chunk; resolves with the full text. */
 export const streamChat = async (input: ChatRequest, onDelta: (text: string) => void, timeoutMs = 90_000) => {
+  for (let attempt = 1; ; attempt += 1) {
+    let received = false;
+    try {
+      return await streamChatOnce(input, (text) => {
+        received = true;
+        onDelta(text);
+      }, timeoutMs);
+    } catch (error) {
+      // Retry only if nothing has reached the screen yet, so a reply is never duplicated.
+      if (attempt >= 2 || received || !transient(error)) throw error;
+      await pause(1500);
+    }
+  }
+};
+
+const streamChatOnce = async (input: ChatRequest, onDelta: (text: string) => void, timeoutMs: number) => {
   const controller = new AbortController();
   const timer = window.setTimeout(() => controller.abort(), timeoutMs);
   let text = "";

@@ -130,6 +130,8 @@ export type CaseState = {
     at: string;
   };
   debriefOpenedAt?: string;
+  /** When the Chair finished or skipped the table tour for this case. */
+  tourSeenAt?: string;
 };
 
 export type StudyStep = "welcome" | "consent" | "declined" | "demographics" | "case" | "questionnaire" | "done" | "stopped";

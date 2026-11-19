@@ -1,4 +1,4 @@
-import { BookOpen, NotebookPen, X } from "lucide-react";
+import { BookOpen, HelpCircle, NotebookPen, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { negativeAgentId, studyAgentById } from "../../shared/studyRoster";
 import type { AgentKey, Debrief, Round, Verdict } from "../../shared/studyTypes";
@@ -16,7 +16,8 @@ import {
   streamChat,
   type ChatRequest,
 } from "./api";
-import { ClerkPaper, Ledger, Paper, PinTray, Table, listNames } from "./Chamber";
+import { CardWindow, ClerkPaper, FloorWindow, Ledger, PatientPane, PinTray, RecordPane, Table, listNames, patientPronouns } from "./Chamber";
+import { Tour, type TourStep } from "./Tour";
 import { changeOptions, confidenceOptions } from "./content";
 import { FinalPlanView, FloorPointsEditor, SummarySheet, WorkingPlanEditor, WorkingPlanView } from "./Plan";
 import {
@@ -620,9 +621,12 @@ export function CaseView({ slot, caseIndex, caseCount, caseState, updateCase, on
     return (
       <Chamber
         slot={slot}
+        caseIndex={caseIndex}
         caseLine={caseLine}
         caseState={caseState}
         style={style}
+        log={(type, data) => void log(type, data)}
+        onTourDone={() => updateCase((state) => (state.tourSeenAt ? state : { ...state, tourSeenAt: now() }))}
         onFocus={focus}
         onAsk={ask}
         onHear={hearOut}
@@ -678,9 +682,11 @@ export function CaseView({ slot, caseIndex, caseCount, caseState, updateCase, on
 
 type ChamberProps = {
   slot: CaseSlot;
+  caseIndex: number;
   caseLine: string;
   caseState: CaseState;
   style: "paragraph" | "hook";
+  log: (type: string, data?: unknown) => void;
   onFocus: (seat: Seat) => void;
   onAsk: (seat: Seat, text: string) => void;
   onHear: (agentId: AgentKey) => void;
@@ -703,28 +709,142 @@ type ChamberProps = {
   onRetrySummary: () => void;
   onReopen: () => void;
   onToFinal: () => void;
+  onTourDone: () => void;
+};
+
+const tourSteps = (slot: CaseSlot, firstCase: boolean): TourStep[] => {
+  const label = slot.case.patientLabel;
+  const pronoun = patientPronouns(label);
+  const steps: Array<TourStep & { always?: boolean }> = [
+    {
+      target: ".table-stage",
+      title: "Your panel",
+      body: "Six colleagues sit around the table, each thinking in a different way. Turn the table with the arrows, or click any card: it turns over to show your conversation with that member.",
+    },
+    {
+      target: ".floor-seal",
+      title: "The Floor",
+      body: "Click the seal to ask everyone the same question at once. Each member answers on their own card, and the Floor shows who said what.",
+    },
+    {
+      target: ".tokens",
+      title: "Your questions",
+      body: `You can ask the panel ${roundBudget[1]} questions in this round and ${roundBudget[2]} in the debate. A question to the Floor counts as one.${
+        slot.mode === "triadic" ? ` Talking to ${label} is free.` : ""
+      }`,
+    },
+    slot.mode === "triadic"
+      ? {
+          target: ".patient-pane",
+          title: `${label} is in the room`,
+          body: `Talk to ${pronoun.object} here, as you would in a consultation. ${pronoun.subject[0].toUpperCase()}${pronoun.subject.slice(1)} answers only from what ${pronoun.subject} knows and may raise things ${pronoun.reflexive}.`,
+          always: true,
+        }
+      : {
+          target: ".record-pane",
+          title: `${label} at a glance`,
+          body: `${label} is not in the room this time. The key facts and results stay here; open the full record at any time.`,
+          always: true,
+        },
+    {
+      target: ".pin-tray",
+      title: "Keep what matters",
+      body: "In any reply, select words or press Keep. What you keep collects here, where you can reword or remove it, and goes forward to the synthesis.",
+    },
+    {
+      target: ".rail-plan",
+      title: "Your plan and notes",
+      body: "Update your working plan or jot notes at any time. The plan you locked at the start stays as it was.",
+    },
+    {
+      target: ".advance",
+      title: "Three rounds",
+      body: "When you are ready, call the debate: the panel reads everything and argues it out. Then the synthesis, where you decide what goes into the Minutes.",
+    },
+  ];
+  return steps.filter((step) => firstCase || step.always);
 };
 
 function Chamber(props: ChamberProps) {
   const { slot, caseState } = props;
   const [drawer, setDrawer] = useState<"plan" | "record">();
   const [confirmRound, setConfirmRound] = useState(false);
+  const [open, setOpen] = useState<AgentKey | "floor">();
+  const [seen, setSeen] = useState<Partial<Record<AgentKey, number>>>({});
+  /** The full tour on the first case or on request; on a later case only what is new (the patient's place). */
+  const [touring, setTouring] = useState<"full" | "short">();
   const left = questionsLeft(caseState);
   const busy = caseState.lines.some((line) => line.status === "streaming");
   const openingsReady = Object.values(caseState.openings).every((opening) => opening?.status !== "loading");
+  const triadic = slot.mode === "triadic";
 
   useEffect(() => setConfirmRound(false), [caseState.round]);
+
+  // The debate opens on the Floor, where every statement is listed.
+  useEffect(() => {
+    if (caseState.round === 2) setOpen("floor");
+  }, [caseState.round]);
+
+  // Whatever is on an open card has been seen.
+  const lineCount = caseState.lines.filter((line) => line.status === "done").length;
+  useEffect(() => {
+    if (open && open !== "floor") setSeen((current) => ({ ...current, [open]: Date.now() }));
+  }, [open, lineCount]);
+
+  // The tour runs once, when the table first opens (a short version on the second case).
+  useEffect(() => {
+    if (caseState.tourSeenAt || caseState.round !== 1) return;
+    const timer = window.setTimeout(() => {
+      setTouring(props.caseIndex === 0 ? "full" : "short");
+      props.log("tour_started", { auto: true });
+    }, 1400);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && open && !touring) setOpen(undefined);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, touring]);
+
+  const openSeat = (seat: AgentKey | "floor") => {
+    props.onFocus(seat);
+    setOpen(seat);
+    props.log("card_opened", { seat, round: caseState.round });
+  };
+
+  const turnTo = (seat: AgentKey) => {
+    props.onFocus(seat);
+    if (open) setOpen(seat);
+  };
 
   const advance = caseState.round === 1 ? props.onCallDebate : props.onCallSynthesis;
   const advanceLabel = caseState.round === 1 ? "Call the debate" : "Call the synthesis";
 
+  const windowProps = {
+    slot,
+    caseState,
+    style: props.style,
+    onAsk: props.onAsk,
+    onHear: props.onHear,
+    onPin: props.onPin,
+    onRetryLine: props.onRetryLine,
+    onRetryOpening: props.onRetryOpening,
+    onOpen: openSeat,
+    onClose: () => setOpen(undefined),
+    onListen: (lineId: string, agentId: AgentKey) => props.log("reply_listened", { lineId, agentId }),
+  };
+
   return (
-    <div className={`chamber round-${caseState.round}`}>
+    <div className={`chamber round-${caseState.round} ${triadic ? "triadic" : "dyadic"}`}>
       <div className="rail">
         <div className="rail-case">
           <span className="rail-step">{props.caseLine}</span>
           <strong>{slot.case.title}</strong>
-          <span className={`mode-chip ${slot.mode}`}>{slot.mode === "triadic" ? `${slot.case.patientLabel} is at the table` : "You and the panel"}</span>
+          <span className={`mode-chip ${slot.mode}`}>{triadic ? `${slot.case.patientLabel} is in the room` : "You and the panel"}</span>
         </div>
         <ol className="rounds" aria-label="Rounds">
           {([1, 2, 3] as Round[]).map((round) => (
@@ -742,30 +862,46 @@ function Chamber(props: ChamberProps) {
             <span className="tokens-label">{left} left</span>
           </div>
         )}
-        <button className="rail-record" onClick={() => setDrawer("plan")} aria-pressed={drawer === "plan"}>
-          <NotebookPen size={16} /> My plan and notes
+        <button
+          className="rail-record"
+          onClick={() => {
+            setTouring("full");
+            props.log("tour_started", { auto: false });
+          }}
+        >
+          <HelpCircle size={16} /> Guide
+        </button>
+        <button className="rail-record rail-plan" onClick={() => setDrawer("plan")} aria-pressed={drawer === "plan"}>
+          <NotebookPen size={16} /> My plan
         </button>
         <button className="rail-record" onClick={() => setDrawer("record")} aria-pressed={drawer === "record"}>
-          <BookOpen size={16} /> Patient record
+          <BookOpen size={16} /> Record
         </button>
       </div>
+
+      {caseState.round < 3 &&
+        (triadic ? (
+          <PatientPane
+            slot={slot}
+            caseState={caseState}
+            onAsk={props.onAsk}
+            onRetryLine={props.onRetryLine}
+            onPutPatientMotion={() => {
+              props.onPutPatientMotion();
+              setOpen("floor");
+            }}
+            onNotePatientMotion={props.onNotePatientMotion}
+          />
+        ) : (
+          <RecordPane slot={slot} onOpenRecord={() => setDrawer("record")} />
+        ))}
 
       <section className="stage" aria-label="The table">
         {caseState.round < 3 ? (
           <>
-            <Table slot={slot} caseState={caseState} style={props.style} onFocus={props.onFocus} />
-            {caseState.pendingPatientMotion && (
-              <div className="patient-motion" role="alert">
-                <span className="patient-motion-who">{slot.case.patientLabel} raises a point</span>
-                <p>“{caseState.pendingPatientMotion.text}”</p>
-                <div className="slip-actions">
-                  <button className="brass" onClick={props.onPutPatientMotion}>
-                    Put it to the Floor
-                  </button>
-                  <button onClick={props.onNotePatientMotion}>Note it and carry on</button>
-                </div>
-              </div>
-            )}
+            <Table slot={slot} caseState={caseState} style={props.style} open={open} seen={seen} onOpen={openSeat} onTurn={turnTo}>
+              {open === "floor" ? <FloorWindow {...windowProps} /> : open ? <CardWindow {...windowProps} agentId={open} /> : null}
+            </Table>
             <div className="stage-foot">
               <PinTray caseState={caseState} onUnpin={props.onUnpin} onEdit={props.onEditPin} />
               <div className="advance">
@@ -834,20 +970,19 @@ function Chamber(props: ChamberProps) {
         )}
       </section>
 
-      {caseState.round < 3 ? (
-        <Paper
-          slot={slot}
-          caseState={caseState}
-          style={props.style}
-          onAsk={props.onAsk}
-          onHear={props.onHear}
-          onPin={props.onPin}
-          onRetryLine={props.onRetryLine}
-          onRetryOpening={props.onRetryOpening}
-          onFocus={props.onFocus}
-        />
-      ) : (
+      {caseState.round === 3 && (
         <ClerkPaper caseState={caseState} onSend={props.onClerkSend} onConfirm={props.onConfirm} onDiscard={props.onDiscard} onSeal={props.onSeal} />
+      )}
+
+      {touring && (
+        <Tour
+          steps={tourSteps(slot, touring === "full")}
+          onDone={(completed, reached) => {
+            setTouring(undefined);
+            props.log("tour_finished", { completed, reached });
+            props.onTourDone();
+          }}
+        />
       )}
     </div>
   );

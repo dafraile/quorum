@@ -41,12 +41,25 @@ export type PatientMotionScript = {
   trigger: { afterInteractions?: number; afterSeconds?: number };
 };
 
+/** One result series for the at-a-glance panel, in the record's units with an optional second unit system. */
+export type GlanceLab = {
+  label: string;
+  unit: string;
+  altUnit?: string;
+  points: Array<{ when: string; value: number; alt?: number }>;
+  note?: string;
+};
+
+/** The persistent summary beside the table: key facts and result trends, all taken from the record. */
+export type Glance = { facts: string[]; labs: GlanceLab[] };
+
 /** What the participant's browser may see of a case (no hidden script, no reference plan). */
 export type PublicCase = {
   id: string;
   title: string;
   patientLabel: string;
   record: RecordSection[];
+  glance?: Glance;
   motion: string;
   patientMotions: PatientMotionScript[];
 };
