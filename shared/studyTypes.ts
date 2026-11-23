@@ -58,6 +58,10 @@ export type PublicCase = {
   id: string;
   title: string;
   patientLabel: string;
+  /** One line that introduces the patient as a person (age, work, who they live with), from the record. */
+  patientIntro?: string;
+  /** Optional portrait under /public (e.g. "/patients/mr-t.jpg"); the initial is shown until there is one. */
+  portrait?: string;
   record: RecordSection[];
   glance?: Glance;
   motion: string;

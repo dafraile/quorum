@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { studyAgentById } from "../../shared/studyRoster";
-import type { AgentKey, FloorSource, OpeningStyle, ParticipantConfig, PlanStart } from "../../shared/studyTypes";
+import type { AgentKey, FloorSource, OpeningStyle, ParticipantConfig, PlanStart, StudyMode } from "../../shared/studyTypes";
 import "./study.css";
 
 type ParticipantRow = ParticipantConfig & {
@@ -39,10 +39,20 @@ export function StudyAdmin() {
   const [pilot, setPilot] = useState(true);
   const [label, setLabel] = useState("");
   const [showConsent, setShowConsent] = useState(true);
+  const [cases, setCases] = useState<1 | 2>(1);
+  const [mode, setMode] = useState<StudyMode>("triadic");
   const [floorSources, setFloorSources] = useState<FloorSource[]>(["static", "static"]);
-  const [planStarts, setPlanStarts] = useState<Array<PlanStart | "random">>(["random", "random"]);
-  const [openingStyles, setOpeningStyles] = useState<Array<OpeningStyle | "random">>(["random", "random"]);
+  const [planStarts, setPlanStarts] = useState<Array<PlanStart | "random">>(["prefilled", "random"]);
+  const [openingStyles, setOpeningStyles] = useState<Array<OpeningStyle | "random">>(["hook", "random"]);
   const [allocation, setAllocation] = useState<"auto" | "0" | "1" | "2" | "3">("auto");
+
+  const chooseDesign = (next: 1 | 2) => {
+    setCases(next);
+    setAllocation("auto");
+    // One case: fixed settings. Two cases: the pilot default of one of each, in random order.
+    setPlanStarts(next === 1 ? ["prefilled", "random"] : ["random", "random"]);
+    setOpeningStyles(next === 1 ? ["hook", "random"] : ["random", "random"]);
+  };
   const [confirmDelete, setConfirmDelete] = useState<string>();
 
   const refresh = async (activeToken = token) => {
@@ -93,8 +103,9 @@ export function StudyAdmin() {
 
   const create = async () => {
     setNotice(undefined);
-    const randomPlan = planStarts.includes("random");
-    const randomOpening = openingStyles.includes("random");
+    const positions = cases === 1 ? [0] : [0, 1];
+    const randomPlan = positions.some((index) => planStarts[index] === "random");
+    const randomOpening = positions.some((index) => openingStyles[index] === "random");
     try {
       const created = await adminFetch("/api/study/admin/participants", token, {
         method: "POST",
@@ -102,9 +113,11 @@ export function StudyAdmin() {
           pilot,
           label: label || undefined,
           showConsent,
-          floorSources,
-          planStarts: randomPlan ? undefined : planStarts,
-          openingStyles: randomOpening ? undefined : openingStyles,
+          cases,
+          mode,
+          floorSources: floorSources.slice(0, positions.length),
+          planStarts: randomPlan ? undefined : planStarts.slice(0, positions.length),
+          openingStyles: randomOpening ? undefined : openingStyles.slice(0, positions.length),
           allocation: allocation === "auto" ? undefined : Number(allocation),
         }),
       });
@@ -186,18 +199,45 @@ export function StudyAdmin() {
             <input value={label} onChange={(event) => setLabel(event.target.value)} placeholder="e.g. pilot round 1" />
           </label>
           <label className="field">
-            Counterbalanced sequence
-            <select value={allocation} onChange={(event) => setAllocation(event.target.value as typeof allocation)}>
-              <option value="auto">Next in block-randomised allocation</option>
-              <option value="0">0: case A dyadic → case B triadic</option>
-              <option value="1">1: case A triadic → case B dyadic</option>
-              <option value="2">2: case B dyadic → case A triadic</option>
-              <option value="3">3: case B triadic → case A dyadic</option>
+            Design
+            <select value={cases} onChange={(event) => chooseDesign(Number(event.target.value) as 1 | 2)}>
+              <option value={1}>One case (default since pilot 2)</option>
+              <option value={2}>Two cases, one per mode (original design)</option>
             </select>
           </label>
-          {[0, 1].map((position) => (
+          {cases === 1 ? (
+            <>
+              <label className="field">
+                Case
+                <select value={allocation} onChange={(event) => setAllocation(event.target.value as typeof allocation)}>
+                  <option value="auto">Next in block-randomised allocation (alternates A and B)</option>
+                  <option value="0">Case A: post-discharge heart failure</option>
+                  <option value="1">Case B: diabetes review</option>
+                </select>
+              </label>
+              <label className="field">
+                Mode
+                <select value={mode} onChange={(event) => setMode(event.target.value as StudyMode)}>
+                  <option value="triadic">Patient in the room (triadic)</option>
+                  <option value="dyadic">GP and panel only (dyadic)</option>
+                </select>
+              </label>
+            </>
+          ) : (
+            <label className="field">
+              Counterbalanced sequence
+              <select value={allocation} onChange={(event) => setAllocation(event.target.value as typeof allocation)}>
+                <option value="auto">Next in block-randomised allocation</option>
+                <option value="0">0: case A dyadic → case B triadic</option>
+                <option value="1">1: case A triadic → case B dyadic</option>
+                <option value="2">2: case B dyadic → case A triadic</option>
+                <option value="3">3: case B triadic → case A dyadic</option>
+              </select>
+            </label>
+          )}
+          {(cases === 1 ? [0] : [0, 1]).map((position) => (
             <div key={position} className="field">
-              <span>Case {position + 1}</span>
+              <span>{cases === 1 ? "Settings" : `Case ${position + 1}`}</span>
               <select
                 value={floorSources[position]}
                 onChange={(event) =>
@@ -215,7 +255,7 @@ export function StudyAdmin() {
                   )
                 }
               >
-                <option value="random">Final plan box: random (pilot: one of each)</option>
+                {cases === 2 && <option value="random">Final plan box: random (pilot: one of each)</option>}
                 <option value="prefilled">Final plan box: pre-filled</option>
                 <option value="blank">Final plan box: blank</option>
               </select>
@@ -227,7 +267,7 @@ export function StudyAdmin() {
                   )
                 }
               >
-                <option value="random">Cards open with: random (pilot: one of each)</option>
+                {cases === 2 && <option value="random">Cards open with: random (pilot: one of each)</option>}
                 <option value="paragraph">Cards open with: a paragraph</option>
                 <option value="hook">Cards open with: a one-line hook</option>
               </select>

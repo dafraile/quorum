@@ -6,7 +6,7 @@ import {
   consentStatements,
   demographicFreeText,
   demographicItems,
-  picfSections,
+  picfSectionsFor,
   pilotItems,
   pilotOpeningStyleItem,
   pilotPlanStartItem,
@@ -97,9 +97,9 @@ export function StudyApp() {
           <section className="form-card narrow">
             <h1>Quorum</h1>
             <p>
-              Thank you for taking part. You will chair a panel of AI agents around a table, discussing two fictional patients. Before
-              each discussion you record your own working diagnosis and plan. Then you talk with the panel over three rounds, decide what
-              goes into the Minutes, and finish with a short questionnaire. It takes about 30 minutes.
+              {caseCount === 1
+                ? "Thank you for taking part. You will chair a panel of AI agents around a table, discussing a fictional patient. First you record your own working diagnosis and plan. Then the consultation pauses while you talk with the panel over three rounds and decide what goes into the Minutes. You finish with a short questionnaire. It takes about 40 minutes."
+                : "Thank you for taking part. You will chair a panel of AI agents around a table, discussing two fictional patients. Before each discussion you record your own working diagnosis and plan. Then you talk with the panel over three rounds, decide what goes into the Minutes, and finish with a short questionnaire. It takes about 30 minutes."}
             </p>
             <p>Please do not type any real patient information at any point.</p>
             <button
@@ -119,6 +119,7 @@ export function StudyApp() {
       return (
         <Shell header={header}>
           <ConsentStep
+            sequence={session.sequence}
             onAgree={() => {
               void logEvent("consent_agreed", { statements: consentStatements });
               update((current) => ({ ...current, step: "demographics", consentAt: new Date().toISOString() }));
@@ -145,6 +146,7 @@ export function StudyApp() {
       return (
         <Shell header={header}>
           <DemographicsStep
+            caseCount={caseCount}
             onSubmit={(answers) => {
               void logEvent("demographics_submitted", answers);
               update((current) => ({ ...current, demographics: answers }));
@@ -198,6 +200,7 @@ export function StudyApp() {
       return (
         <Shell header={header}>
           <QuestionnaireStep
+            sequence={session.sequence}
             extraItems={extra}
             onSubmit={async (answers) => {
               await logEvent("questionnaire_submitted", answers);
@@ -278,12 +281,20 @@ function StudyHeader({
   );
 }
 
-function ConsentStep({ onAgree, onDecline }: { onAgree: () => void; onDecline: () => void }) {
+function ConsentStep({
+  sequence,
+  onAgree,
+  onDecline,
+}: {
+  sequence: SessionPayload["sequence"];
+  onAgree: () => void;
+  onDecline: () => void;
+}) {
   const [checked, setChecked] = useState<boolean[]>(consentStatements.map(() => false));
   return (
     <section className="form-card narrow consent">
       <h1>Participant information and consent</h1>
-      {picfSections.map((section) => (
+      {picfSectionsFor(sequence).map((section) => (
         <div key={section.heading}>
           <h3>{section.heading}</h3>
           {section.paragraphs.map((paragraph) => (
@@ -336,7 +347,7 @@ function ChoiceField({
   );
 }
 
-function DemographicsStep({ onSubmit }: { onSubmit: (answers: Record<string, string>) => void }) {
+function DemographicsStep({ caseCount, onSubmit }: { caseCount: number; onSubmit: (answers: Record<string, string>) => void }) {
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const set = (id: string, value: string) => setAnswers((current) => ({ ...current, [id]: value }));
   return (
@@ -351,28 +362,54 @@ function DemographicsStep({ onSubmit }: { onSubmit: (answers: Record<string, str
         <input value={answers[demographicFreeText.id] ?? ""} onChange={(event) => set(demographicFreeText.id, event.target.value)} />
       </label>
       <button className="primary" onClick={() => onSubmit(answers)}>
-        Continue to the first case
+        {caseCount === 1 ? "Continue to the case" : "Continue to the first case"}
       </button>
     </section>
   );
 }
 
+/**
+ * The approved questionnaire, minus what the participant could not have seen: the mode preference needs both
+ * modes, the patient item needs a triadic case. With one case, "each case" reads "the case".
+ */
+const questionnaireFor = (sequence: SessionPayload["sequence"]) => {
+  const modes = new Set(sequence.map((slot) => slot.mode));
+  const oneCase = sequence.length === 1;
+  return questionnaireSections.map((section) => ({
+    ...section,
+    items: section.items
+      .filter((item) => (item.id === "q3_4_modalityPreference" ? modes.size > 1 : item.id === "q3_5_patientInTriadic" ? modes.has("triadic") : true))
+      .map((item) =>
+        oneCase
+          ? ({
+              ...item,
+              label: item.label.replace("each case", "the case").replace("In triadic mode, how much", "How much"),
+              text: item.text?.replace("in the cases", "in the case"),
+            } as QuestionItem)
+          : item,
+      ),
+  }));
+};
+
 function QuestionnaireStep({
+  sequence,
   extraItems,
   onSubmit,
 }: {
+  sequence: SessionPayload["sequence"];
   extraItems: QuestionItem[];
   onSubmit: (answers: Record<string, string>) => Promise<void>;
 }) {
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const set = (id: string, value: string) => setAnswers((current) => ({ ...current, [id]: value }));
-  const sections = extraItems.length ? [...questionnaireSections, { heading: "Pilot questions", items: extraItems }] : questionnaireSections;
+  const approved = questionnaireFor(sequence);
+  const sections = extraItems.length ? [...approved, { heading: "Pilot questions", items: extraItems }] : approved;
 
   return (
     <section className="form-card narrow">
       <h1>Questionnaire</h1>
-      <p className="hint">About your experience across both cases.</p>
+      <p className="hint">{sequence.length === 1 ? "About your experience with the case." : "About your experience across both cases."}</p>
       {sections.map((section) => (
         <div key={section.heading} className="question-section">
           <h2>{section.heading}</h2>

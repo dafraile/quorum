@@ -919,12 +919,16 @@ export function PatientPane({
   return (
     <aside className="patient-pane" aria-label={`Consultation with ${label}`}>
       <header className="patient-pane-head">
-        <span className="patient-medallion" aria-hidden="true">
-          {label.replace(/^(Mr|Ms|Mrs|Miss|Dr)\s+/, "").slice(0, 1)}
+        <span className={`patient-medallion ${slot.case.portrait ? "portrait" : ""}`} aria-hidden="true">
+          {slot.case.portrait ? <img src={slot.case.portrait} alt="" draggable={false} /> : label.replace(/^(Mr|Ms|Mrs|Miss|Dr)\s+/, "").slice(0, 1)}
         </span>
         <div>
           <h2>{label}</h2>
-          <p>In the room with you. Questions to {pronoun.object} are free.</p>
+          {slot.case.patientIntro && <p className="patient-intro">{slot.case.patientIntro}</p>}
+          <p className="patient-status">
+            Consultation paused while the panel sits. {pronoun.subject[0].toUpperCase() + pronoun.subject.slice(1)} is still with you; questions to{" "}
+            {pronoun.object} are free.
+          </p>
         </div>
       </header>
       {slot.case.glance && (

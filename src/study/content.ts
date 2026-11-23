@@ -67,6 +67,34 @@ export const picfSections: Array<{ heading: string; paragraphs: string[] }> = [
   },
 ];
 
+/**
+ * The one-case design (from 11-23, after pilot 2): one case per participant, presented as a simulated
+ * consultation that pauses while the panel sits. Only "Purpose" and "What you will do" differ from the
+ * approved two-case text above; the PICF document needs the same change before the main study.
+ */
+export const picfSectionsFor = (sequence: Array<{ mode: string }>) => {
+  if (sequence.length !== 1) return picfSections;
+  const triadic = sequence[0].mode === "triadic";
+  const purpose = `This study aims to evaluate how General Practitioners (GPs) reason and make decisions when working with Quorum, a prototype deliberative AI companion. Instead of a single chatbot giving one answer, Quorum shows a panel of AI agents, each written as a clinical archetype (for example an intern, an experienced nurse, an evidence-focused librarian and a contrarian), discussing a simulated case. You chair the discussion and decide what is accepted into the consultation notes. The study will explore how you work with the panel${
+    triadic ? " when a simulated patient also takes part" : ""
+  }, and whether the tool supports or displaces your own clinical judgement.`;
+  const whatYouDo = [
+    "One scheduled session of approximately 40 minutes (about 25 minutes working with Quorum, followed by a 10-minute questionnaire), via Zoom or on campus at Macquarie University, with a member of the research team available for technical support. You will work through one simulated case built on a synthetic (fictional) patient record, allocated at random from two cases. No real patient is involved, and nothing you decide during the study affects any real person.",
+    `You review the synthetic patient record and record your own working diagnosis and plan before the AI panel's discussion is shown. The case is a simulated consultation: while the panel sits, the consultation is paused and you confer with it.${
+      triadic
+        ? " The simulated patient (scripted and driven by the platform) stays in the room: the patient can hear the discussion and raise questions, and you can ask the patient questions directly."
+        : ""
+    } You work through the panel's discussion, ask the panel questions, and accept, amend or reject each contribution before it enters the notes. You then rate your confidence in your final plan and read a short debrief. Finally you complete a questionnaire about your experience. You may also opt in to a 30-minute follow-up interview, which will be audio recorded.`,
+  ];
+  return picfSections.map((section) =>
+    section.heading === "Purpose of the study"
+      ? { ...section, paragraphs: [purpose] }
+      : section.heading === "What you will do"
+        ? { ...section, paragraphs: whatYouDo }
+        : section,
+  );
+};
+
 export const consentStatements = [
   "I have read and understood the information provided in this form.",
   "I understand that participation is voluntary and that I can withdraw at any time.",
@@ -262,6 +290,23 @@ export const pilotItems: QuestionItem[] = [
     id: "pilot_rounds",
     label: "Calling a debate round before the synthesis was…",
     options: ["Not useful", "Somewhat useful", "Very useful"],
+  },
+  {
+    id: "pilot_whereItFits",
+    label: "Where would a panel like this fit best?",
+    options: [
+      "During a consultation",
+      "Before or after a consultation (preparation or review)",
+      "Teaching and training (for example registrars or students)",
+      "I would not use it",
+    ],
+    text: "Why?",
+  },
+  {
+    id: "pilot_education",
+    label: "How useful would Quorum be for teaching clinical reasoning, for example to medical students or GP registrars?",
+    options: ["Not at all useful", "Slightly useful", "Moderately useful", "Very useful", "Extremely useful"],
+    text: "How would you use it?",
   },
   {
     id: "pilot_feedback",

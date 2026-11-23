@@ -778,6 +778,8 @@ const adminParticipants = async (req: IncomingMessage, res: ServerResponse) => {
         pilot: body.pilot !== false,
         label: shortText(body.label, 80) || undefined,
         showConsent: body.showConsent !== false,
+        cases: body.cases === 2 ? 2 : 1,
+        mode: body.mode === "dyadic" ? "dyadic" : "triadic",
         floorSources: pick<FloorSource>(body.floorSources, ["static", "live"]),
         planStarts: pick<PlanStart>(body.planStarts, ["prefilled", "blank"]),
         openingStyles: pick<OpeningStyle>(body.openingStyles, ["paragraph", "hook"]),

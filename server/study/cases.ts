@@ -17,6 +17,8 @@ export type StudyCase = {
   scenario: "S2-known-complex-recent-change" | "S3-patient-raised-concern";
   title: string;
   patientLabel: string;
+  patientIntro?: string;
+  portrait?: string;
   record: RecordSection[];
   glance?: Glance;
   motion: string;
@@ -39,6 +41,7 @@ export const studyCases: StudyCase[] = [
     scenario: "S2-known-complex-recent-change",
     title: "Post-discharge review",
     patientLabel: "Mr T",
+    patientIntro: "77, retired electrician. Lives with his wife.",
     record: [
       {
         heading: "Patient",
@@ -239,6 +242,7 @@ export const studyCases: StudyCase[] = [
     scenario: "S3-patient-raised-concern",
     title: "Diabetes review",
     patientLabel: "Ms L",
+    patientIntro: "54, works shifts. Lives with her partner and adult son.",
     record: [
       {
         heading: "Patient",
@@ -403,6 +407,8 @@ export const publicCase = (item: StudyCase, includePatientMotions: boolean): Pub
   id: item.id,
   title: item.title,
   patientLabel: item.patientLabel,
+  patientIntro: item.patientIntro,
+  portrait: item.portrait,
   record: item.record,
   glance: item.glance,
   motion: item.motion,

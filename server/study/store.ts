@@ -91,8 +91,9 @@ export const saveParticipant = async (record: ParticipantRecord) => {
   await writeFile(participantFile(record.config.participantId), JSON.stringify(record, null, 2));
 };
 
-// Counterbalancing: 2 cases x 2 mode orders = 4 sequences, assigned in randomly
-// permuted blocks of 4 (the blocked random allocation used in Part 1).
+// Two-case design: 2 cases x 2 mode orders = 4 sequences, assigned in randomly
+// permuted blocks of 4 (the blocked random allocation used in Part 1). The one-case
+// design (default) takes the same allocation modulo 2 to pick the case.
 const sequenceTemplates: Array<Array<{ caseIndex: number; mode: StudyMode }>> = [
   [
     { caseIndex: 0, mode: "dyadic" },
@@ -142,13 +143,23 @@ export type CreateParticipantInput = {
   pilot?: boolean;
   label?: string;
   showConsent?: boolean;
-  /** Per case position (1st, 2nd). Defaults: static, static. */
+  /**
+   * 1 (default since pilot 2): one case, with the patient in the room unless `mode` says otherwise; the case
+   * alternates across participants. 2: the original design, two cases, one per mode, counterbalanced.
+   */
+  cases?: 1 | 2;
+  /** One-case design only: the mode for the single case. Default triadic. */
+  mode?: StudyMode;
+  /** Per case position. Default static. */
   floorSources?: FloorSource[];
-  /** Per case position. Defaults: pilot -> one prefilled and one blank in random order; otherwise prefilled. */
+  /** Per case position. Defaults: one case -> prefilled; two cases -> pilot: one of each in random order, otherwise prefilled. */
   planStarts?: PlanStart[];
-  /** Per case position. Defaults: pilot -> one paragraph and one hook in random order; otherwise paragraph. */
+  /** Per case position. Defaults: one case -> hook; two cases -> pilot: one of each in random order, otherwise paragraph. */
   openingStyles?: OpeningStyle[];
-  /** Force one of the four counterbalanced sequences (0-3) instead of the next allocation. */
+  /**
+   * Force the allocation instead of the next one in the block-randomised list.
+   * One case: 0 = case A, 1 = case B. Two cases: one of the four counterbalanced sequences (0-3).
+   */
   allocation?: number;
 };
 
@@ -158,23 +169,29 @@ export const createParticipant = async (input: CreateParticipantInput): Promise<
   const prefix = pilot ? "T" : "P";
   const counters = await nextCounters(prefix);
   const participantId = `${prefix}${String(counters.number).padStart(2, "0")}`;
+  const oneCase = input.cases !== 2;
+  const maxAllocation = oneCase ? 1 : 3;
 
+  // Blocks of four keep the two cases (or the four sequences) balanced either way.
   const allocation =
-    typeof input.allocation === "number" && input.allocation >= 0 && input.allocation <= 3
+    typeof input.allocation === "number" && input.allocation >= 0 && input.allocation <= maxAllocation
       ? input.allocation
-      : await nextAllocation(counters.index);
+      : (await nextAllocation(counters.index)) % (maxAllocation + 1);
+  const slots = oneCase ? [{ caseIndex: allocation, mode: input.mode ?? ("triadic" as StudyMode) }] : sequenceTemplates[allocation];
   const floorSources = input.floorSources ?? ["static", "static"];
   const planStarts =
-    input.planStarts ?? (pilot ? shuffle<PlanStart>(["prefilled", "blank"]) : ["prefilled", "prefilled"]);
+    input.planStarts ??
+    (oneCase ? ["prefilled"] : pilot ? shuffle<PlanStart>(["prefilled", "blank"]) : ["prefilled", "prefilled"]);
   const openingStyles =
-    input.openingStyles ?? (pilot ? shuffle<OpeningStyle>(["paragraph", "hook"]) : ["paragraph", "paragraph"]);
+    input.openingStyles ??
+    (oneCase ? ["hook"] : pilot ? shuffle<OpeningStyle>(["paragraph", "hook"]) : ["paragraph", "paragraph"]);
 
-  const sequence: SequenceItem[] = sequenceTemplates[allocation].map((slot, position) => ({
+  const sequence: SequenceItem[] = slots.map((slot, position) => ({
     caseId: studyCases[slot.caseIndex].id,
     mode: slot.mode,
     floorSource: floorSources[position] ?? "static",
     planStart: planStarts[position] ?? "prefilled",
-    openingStyle: openingStyles[position] ?? "paragraph",
+    openingStyle: openingStyles[position] ?? "hook",
   }));
 
   const record: ParticipantRecord = {
@@ -196,7 +213,7 @@ export const createParticipant = async (input: CreateParticipantInput): Promise<
   await appendEvent(participantId, {
     source: "server",
     type: "participant_created",
-    data: { allocation, sequence, providerMix: record.config.providerMix, pilot },
+    data: { design: oneCase ? "one-case" : "two-case", allocation, sequence, providerMix: record.config.providerMix, pilot },
   });
   return record;
 };

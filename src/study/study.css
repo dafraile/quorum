@@ -2269,6 +2269,29 @@ mark {
   box-shadow: 0 0 0 3px #e9efe9, 0 0 0 5px var(--teal);
 }
 
+.patient-medallion.portrait {
+  overflow: hidden;
+  width: 64px;
+  height: 64px;
+}
+
+.patient-medallion.portrait img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.patient-pane-head .patient-intro {
+  font-size: 15px;
+  color: var(--ink);
+  margin: 2px 0 3px;
+}
+
+.patient-pane-head .patient-status {
+  font-size: 13px;
+  font-style: italic;
+}
+
 .pane-glance {
   border-bottom: 1px solid var(--line);
   padding: 8px 20px;

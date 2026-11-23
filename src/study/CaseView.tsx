@@ -302,9 +302,12 @@ export function CaseView({ slot, caseIndex, caseCount, caseState, updateCase, on
     const tick = () => {
       const current = stateRef.current;
       if (!current.floorOpenedAt || current.round === 3 || current.pendingPatientMotion) return;
+      // Nothing happens while the opening tour is on screen; the clock starts when it closes.
+      if (current.round === 1 && !current.tourSeenAt) return;
       const lastMotion = [...current.lines].reverse().find((line) => line.kind === "patient-motion");
       if (lastMotion && Date.now() - Date.parse(lastMotion.at) < patientMotionGapMs) return;
-      const seconds = (Date.now() - Date.parse(current.floorOpenedAt)) / 1000;
+      const startedAt = Math.max(Date.parse(current.floorOpenedAt), current.tourSeenAt ? Date.parse(current.tourSeenAt) : 0);
+      const seconds = (Date.now() - startedAt) / 1000;
       const interactions = current.lines.filter((line) => line.speaker === "chair").length;
       const next = slot.case.patientMotions.find(
         (motion) =>
@@ -603,7 +606,7 @@ export function CaseView({ slot, caseIndex, caseCount, caseState, updateCase, on
     updateCase((state) => ({ ...state, phase: "debrief", debriefOpenedAt: now() }));
   };
 
-  const caseLine = `Case ${caseIndex + 1} of ${caseCount}`;
+  const caseLine = caseCount === 1 ? "Simulated consultation" : `Case ${caseIndex + 1} of ${caseCount}`;
 
   if (caseState.phase === "record") {
     return (
@@ -736,8 +739,8 @@ const tourSteps = (slot: CaseSlot, firstCase: boolean): TourStep[] => {
     slot.mode === "triadic"
       ? {
           target: ".patient-pane",
-          title: `${label} is in the room`,
-          body: `Talk to ${pronoun.object} here, as you would in a consultation. ${pronoun.subject[0].toUpperCase()}${pronoun.subject.slice(1)} answers only from what ${pronoun.subject} knows and may raise things ${pronoun.reflexive}.`,
+          title: `Time out, with ${label} in the room`,
+          body: `The consultation is paused while the panel sits, but ${label} is still with you. Talk to ${pronoun.object} here, as you would in a consultation. ${pronoun.subject[0].toUpperCase()}${pronoun.subject.slice(1)} can hear the panel, answers only from what ${pronoun.subject} knows and may raise things ${pronoun.reflexive}.`,
           always: true,
         }
       : {
@@ -1056,7 +1059,9 @@ function PrecommitForm({ slot, onSubmit }: { slot: CaseSlot; onSubmit: (value: {
       <h2>Before the panel speaks</h2>
       <p>
         Record your own working diagnosis and plan. It is locked when you open the table, and you can look back at it at any time.
-        {slot.mode === "triadic" ? ` ${slot.case.patientLabel} will be at the table with you and the panel.` : ""}
+        {slot.mode === "triadic"
+          ? ` When you open the table, the consultation pauses while you confer with the panel. ${slot.case.patientLabel} stays in the room: ${patientPronouns(slot.case.patientLabel).subject} can hear the panel and you can ask ${patientPronouns(slot.case.patientLabel).object} anything.`
+          : " When you open the table, the consultation pauses while you confer with the panel."}
       </p>
       <label className="field">
         Working diagnosis
