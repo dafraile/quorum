@@ -1,16 +1,17 @@
 import { Bookmark, ChevronLeft, ChevronRight, Pencil, Square, Trash2, Volume2, X } from "lucide-react";
 import { type CSSProperties, type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { cardBackArt, negativeAgentId, negativePanelLabel, studyAgentById } from "../../shared/studyRoster";
 import type { AgentKey, OpeningStyle, Verdict } from "../../shared/studyTypes";
 import { Glance } from "./Glance";
+import { agentById, tableConfig } from "./tableConfig";
 import {
   activeAgents,
+  budgetFor,
   debateLineFor,
   isSpeaking,
   minutesOf,
   questionsLeft,
-  roundBudget,
-  roundNames,
+  roundLabel,
+  seatsOf,
   verdictLabels,
   type CandidateState,
   type CaseSlot,
@@ -22,11 +23,15 @@ import {
 
 // ================================================================ shared bits
 
-/** The panel in seating order. The patient is not a card: they have their own pane. */
-const panelOrder: AgentKey[] = ["intern", "oldNurse", "biblioRat", "contrarian", "patientAdvocate", "oldGeezer"];
+/** How many questions are left, in words; the demo may have no limit. */
+const budgetHint = (caseState: CaseState, left: number, floor = false) => {
+  const budget = budgetFor(caseState, caseState.round as 1 | 2);
+  if (budget === null) return floor ? "Everyone answers on their own card." : "Ask as much as you like.";
+  return floor ? `Counts as one question. ${left} of ${budget} left this round` : `${left} of ${budget} questions left this round`;
+};
 
 const seatName = (seat: Seat, slot: CaseSlot) =>
-  seat === "floor" ? "The Floor" : seat === "patient" ? slot.case.patientLabel : studyAgentById(seat).name;
+  seat === "floor" ? "The Floor" : seat === "patient" ? slot.case.patientLabel : agentById(seat).name;
 
 export const listNames = (names: string[]) =>
   names.length <= 1 ? names.join("") : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
@@ -227,7 +232,7 @@ export function Table({ slot, caseState, style, open, seen, onOpen, onTurn, chil
     return () => observer.disconnect();
   }, []);
 
-  const seats = panelOrder;
+  const seats = seatsOf(caseState);
   const focused = caseState.focus === "floor" || caseState.focus === "patient" ? undefined : caseState.focus;
   const focusIndex = Math.max(0, focused ? seats.indexOf(focused) : 0);
   const floorFocused = caseState.focus === "floor";
@@ -381,7 +386,7 @@ function SeatCard({
   onOpen: () => void;
 }) {
   const { seat } = item;
-  const agent = studyAgentById(seat);
+  const agent = agentById(seat);
   const opening = caseState.openings[seat];
   const withdrawn = seat === "patientAdvocate" && Boolean(caseState.advocateWithdrawnAt);
   const faceDown = !opening || opening.status === "loading" || withdrawn;
@@ -408,7 +413,7 @@ function SeatCard({
         } as CSSProperties
       }
       onClick={onOpen}
-      aria-label={`${agent.name}${agent.negative ? `. ${negativePanelLabel}` : ""}. Open the conversation`}
+      aria-label={`${agent.name}${agent.negative ? `. ${tableConfig().negativeLabel}` : ""}. Open the conversation`}
       aria-pressed={lifted}
     >
       <span className={`card-flip ${faceDown ? "down" : ""}`} style={{ "--deal": `${dealIndex * 120}ms` } as CSSProperties}>
@@ -416,7 +421,7 @@ function SeatCard({
           <img src={agent.art} alt="" draggable={false} />
         </span>
         <span className="card-face back-face">
-          <img src={cardBackArt} alt="" draggable={false} />
+          <img src={tableConfig().cardBack} alt="" draggable={false} />
           {withdrawn && (
             <span className="withdrawn-note">
               Withdrawn. {slot.case.patientLabel} speaks for {pronoun.reflexive} now.
@@ -428,7 +433,7 @@ function SeatCard({
 
       <span className="seat-plate">
         <span className="seat-name">{agent.shortName}</span>
-        {agent.negative && <span className="negative-ribbon">{negativePanelLabel}</span>}
+        {agent.negative && <span className="negative-ribbon">{tableConfig().negativeLabel}</span>}
       </span>
 
       {unread > 0 ? (
@@ -526,7 +531,7 @@ function Composer({
 
 export function CardWindow({ agentId, ...props }: WindowProps & { agentId: AgentKey }) {
   const { slot, caseState, style } = props;
-  const agent = studyAgentById(agentId);
+  const agent = agentById(agentId);
   const bodyRef = useRef<HTMLDivElement>(null);
   const { selection, setSelection, capture } = useSelectionKeep(bodyRef);
   const left = questionsLeft(caseState);
@@ -556,7 +561,7 @@ export function CardWindow({ agentId, ...props }: WindowProps & { agentId: Agent
           <X size={18} />
         </button>
       </header>
-      {agent.negative && <p className="negative-banner">{negativePanelLabel}</p>}
+      {agent.negative && <p className="negative-banner">{tableConfig().negativeLabel}</p>}
 
       <div className="paper-body" ref={bodyRef} onMouseUp={capture} onKeyUp={capture}>
         {opening && (
@@ -598,7 +603,7 @@ export function CardWindow({ agentId, ...props }: WindowProps & { agentId: Agent
                 : `Ask the ${agent.shortName}…`
           }
           disabled={!canAsk}
-          hint={`${left} of ${roundBudget[caseState.round as 1 | 2]} questions left this round`}
+          hint={budgetHint(caseState, left)}
           action={`Ask the ${agent.shortName}`}
           onSend={(text) => props.onAsk(agentId, text)}
         />
@@ -709,7 +714,7 @@ function LineEntry({
   onOpen: (seat: AgentKey | "floor") => void;
   onListen: () => void;
 }) {
-  const roundTag = line.round > 1 ? <span className="entry-round">{roundNames[line.round]}</span> : null;
+  const roundTag = line.round > 1 ? <span className="entry-round">{roundLabel(line.round)}</span> : null;
 
   if (line.speaker === "chair") {
     return (
@@ -734,7 +739,7 @@ function LineEntry({
   return (
     <div className={`entry agent ${line.kind === "debate" ? "debate" : ""}`}>
       <span className="entry-label">
-        {line.kind === "debate" ? "In the debate" : studyAgentById(line.speaker).shortName} {line.kind !== "debate" && roundTag}
+        {line.kind === "debate" ? "In the debate" : agentById(line.speaker).shortName} {line.kind !== "debate" && roundTag}
       </span>
       {line.status === "error" ? (
         <p className="entry-error">
@@ -757,7 +762,7 @@ function LineEntry({
           {line.stances.map((stance, index) => (
             <li key={index} className={stance.stance}>
               <button className="link" onClick={() => onOpen(stance.agentId)}>
-                {stance.stance === "challenges" ? "Challenges" : "Backs"} {studyAgentById(stance.agentId).shortName}
+                {stance.stance === "challenges" ? "Challenges" : "Backs"} {agentById(stance.agentId).shortName}
               </button>
               : {stance.point}
             </li>
@@ -800,7 +805,7 @@ export function FloorWindow(props: WindowProps) {
   }, [motions.length, debate.length, lastText]);
 
   const row = (line: Line) => {
-    const agent = studyAgentById(line.speaker as AgentKey);
+    const agent = agentById(line.speaker as AgentKey);
     return (
       <li key={line.id}>
         <button className={`floor-row ${agent.negative ? "negative" : ""}`} onClick={() => props.onOpen(agent.id as AgentKey)}>
@@ -815,7 +820,7 @@ export function FloorWindow(props: WindowProps) {
           <ul className="stances compact">
             {line.stances.map((stance, index) => (
               <li key={index} className={stance.stance}>
-                {stance.stance === "challenges" ? "Challenges" : "Backs"} {studyAgentById(stance.agentId).shortName}
+                {stance.stance === "challenges" ? "Challenges" : "Backs"} {agentById(stance.agentId).shortName}
               </li>
             ))}
           </ul>
@@ -851,7 +856,7 @@ export function FloorWindow(props: WindowProps) {
               <p className="floor-question">
                 <span className="entry-label">
                   {motion.speaker === "patient" ? `${slot.case.patientLabel}'s point, put to the Floor` : "You asked the Floor"}
-                  {motion.round > 1 ? `, ${roundNames[motion.round].toLowerCase()}` : ""}
+                  {motion.round > 1 ? `, ${roundLabel(motion.round).toLowerCase()}` : ""}
                 </span>
                 {motion.text}
               </p>
@@ -878,7 +883,7 @@ export function FloorWindow(props: WindowProps) {
         <Composer
           placeholder={left <= 0 ? "No questions left this round." : "Ask the whole Floor…"}
           disabled={left <= 0 || panel.length === 0}
-          hint={`Counts as one question. ${left} of ${roundBudget[caseState.round as 1 | 2]} left this round`}
+          hint={budgetHint(caseState, left, true)}
           action="Ask everyone"
           onSend={(text) => props.onAsk("floor", text)}
         />
@@ -994,22 +999,44 @@ export function PatientPane({
 
 /** Dyadic cases: the record at a glance stays beside the table. */
 export function RecordPane({ slot, onOpenRecord }: { slot: CaseSlot; onOpenRecord: () => void }) {
+  const thinking = tableConfig().domain === "thinking";
+  const label = slot.case.patientLabel;
+  const title = thinking ? "Your question" : slot.case.glance ? label : "Case notes";
   return (
-    <aside className="patient-pane record-pane" aria-label={`${slot.case.patientLabel} at a glance`}>
+    <aside className={`patient-pane record-pane ${thinking ? "question-pane" : ""}`} aria-label={title}>
       <header className="patient-pane-head">
         <span className="patient-medallion" aria-hidden="true">
-          {slot.case.patientLabel.replace(/^(Mr|Ms|Mrs|Miss|Dr)\s+/, "").slice(0, 1)}
+          {thinking ? "?" : slot.case.glance ? label.replace(/^(Mr|Ms|Mrs|Miss|Dr)\s+/, "").slice(0, 1) : "#"}
         </span>
         <div>
-          <h2>{slot.case.patientLabel}</h2>
-          <p>Not in the room: you and the panel only.</p>
+          <h2>{title}</h2>
+          <p>
+            {thinking
+              ? "On the table. Every card has read it."
+              : slot.case.glance
+                ? "Not in the room: you and the panel only."
+                : "Anonymised by you. The patient is not in the room."}
+          </p>
         </div>
       </header>
       <div className="paper-body">
-        {slot.case.glance && <Glance glance={slot.case.glance} />}
-        <button className="open-record" onClick={onOpenRecord}>
-          Open the full record
-        </button>
+        {slot.case.glance ? (
+          <>
+            <Glance glance={slot.case.glance} />
+            <button className="open-record" onClick={onOpenRecord}>
+              Open the full record
+            </button>
+          </>
+        ) : (
+          slot.case.record.map((section) => (
+            <div className="pane-record-section" key={section.heading}>
+              <h3>{section.heading}</h3>
+              {section.lines.map((line, index) => (
+                <p key={index}>{line}</p>
+              ))}
+            </div>
+          ))
+        )}
       </div>
     </aside>
   );
@@ -1093,7 +1120,7 @@ export function PinTray({
               {caseState.pins.map((pin) => (
                 <li key={pin.id}>
                   <span className="pin-who">
-                    {studyAgentById(pin.agentId).shortName}
+                    {agentById(pin.agentId).shortName}
                     {pin.wording && <em> · in your words</em>}
                   </span>
                   {editing === pin.id ? (
@@ -1169,14 +1196,14 @@ type SynthesisProps = {
 
 export function Ledger({ slot, caseState, onRule, onRetry }: SynthesisProps) {
   const [partial, setPartial] = useState<string>();
-  const panel = panelOrder;
+  const panel = seatsOf(caseState);
 
   if (caseState.candidatesStatus === "loading") {
     return (
       <div className="ledger">
         <div className="ledger-panel">
           {panel.map((id) => (
-            <img key={id} src={studyAgentById(id).art} alt="" className="ledger-face thinking" />
+            <img key={id} src={agentById(id).art} alt="" className="ledger-face thinking" />
           ))}
         </div>
         <p className="ledger-wait">The Clerk is gathering what the panel put to you…</p>
@@ -1206,7 +1233,8 @@ export function Ledger({ slot, caseState, onRule, onRetry }: SynthesisProps) {
       </div>
       <ol className="slips">
         {caseState.candidates.map((candidate, index) => {
-          const negative = candidate.agentIds.includes(negativeAgentId);
+          const negativeId = tableConfig().negativeId;
+          const negative = negativeId ? candidate.agentIds.includes(negativeId) : false;
           const shown = candidate.proposed ?? candidate.ruling;
           return (
             <li
@@ -1218,11 +1246,11 @@ export function Ledger({ slot, caseState, onRule, onRetry }: SynthesisProps) {
               <div className="slip-who">
                 <span className="slip-number">{index + 1}</span>
                 {candidate.agentIds.map((id) => (
-                  <img key={id} src={studyAgentById(id).art} alt="" className="slip-face" />
+                  <img key={id} src={agentById(id).art} alt="" className="slip-face" />
                 ))}
-                <span>{listNames(candidate.agentIds.map((id) => studyAgentById(id).shortName))}</span>
+                <span>{listNames(candidate.agentIds.map((id) => agentById(id).shortName))}</span>
                 {candidate.origin === "pin" && <span className="slip-pinned">you kept this</span>}
-                {negative && <span className="slip-negative">{negativePanelLabel}</span>}
+                {negative && <span className="slip-negative">{tableConfig().negativeLabel}</span>}
               </div>
               {candidate.summary && <p className="slip-summary">{candidate.summary}</p>}
               {candidate.wording && <p className="slip-wording">In your words: “{candidate.wording}”</p>}
@@ -1297,6 +1325,13 @@ function PartialPicker({ quote, onCancel, onCarry }: { quote: string; onCancel: 
   );
 }
 
+/** The Clerk's example ruling names two panel members who are actually at this table. */
+const clerkExample = (caseState: CaseState) => {
+  if (tableConfig().domain !== "thinking") return "carry the Nurse's and the Intern's points, leave out the rest";
+  const [first, second] = seatsOf(caseState).map((id) => agentById(id).shortName);
+  return `carry the ${first}'s and the ${second}'s points, leave out the rest`;
+};
+
 export function ClerkPaper({
   caseState,
   onSend,
@@ -1345,8 +1380,8 @@ export function ClerkPaper({
         <div className="entry agent">
           <span className="entry-label">Clerk</span>
           <p>
-            Chair, the points are on the table. You might say “carry the Nurse's and the Intern's points, leave out the rest”, or rule
-            on each one directly.
+            Chair, the points are on the table. You might say “{clerkExample(caseState)}”, or
+            rule on each one directly.
           </p>
         </div>
         {caseState.clerk.map((turn) => (

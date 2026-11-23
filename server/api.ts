@@ -9,6 +9,7 @@ import {
   type ClerkRequest,
 } from "./prompts.ts";
 import { ProviderError, callStructured, isProviderId, providerStatus } from "./providers/index.ts";
+import { quorumEnabled, quorumRoutes } from "./quorum/api.ts";
 import { studyRoutes } from "./study/api.ts";
 
 export type ApiHandler = (req: IncomingMessage, res: ServerResponse) => Promise<void> | void;
@@ -150,4 +151,6 @@ export const apiRoutes: Record<string, ApiHandler> = {
   "/api/runtime": handleRuntime,
   ...workbenchRoutes,
   ...studyRoutes,
+  // The demo table (Clinical and Thinking) calls the models for anyone: off in production unless QUORUM_DEMO=on.
+  ...(quorumEnabled() ? quorumRoutes : {}),
 };

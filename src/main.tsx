@@ -1,8 +1,9 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 
-// The study instance (/study) and the workbench (/) load separately so the study
-// bundle and stylesheet stay independent of the workbench.
+// Four separate bundles: the GP study (/study), its researcher console (/study/admin), the
+// original hackathon workbench (/workbench), and the Quorum demo (everything else: the landing
+// page, Clinical training and consultation, Thinking).
 const root = ReactDOM.createRoot(document.getElementById("root")!);
 const path = window.location.pathname;
 
@@ -22,11 +23,19 @@ if (path.startsWith("/study/admin")) {
       </React.StrictMode>,
     ),
   );
-} else {
+} else if (path.startsWith("/workbench")) {
   void Promise.all([import("./App"), import("./styles.css")]).then(([{ default: App }]) =>
     root.render(
       <React.StrictMode>
         <App />
+      </React.StrictMode>,
+    ),
+  );
+} else {
+  void import("./quorum/QuorumApp").then(({ QuorumApp }) =>
+    root.render(
+      <React.StrictMode>
+        <QuorumApp />
       </React.StrictMode>,
     ),
   );

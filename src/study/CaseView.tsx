@@ -1,6 +1,6 @@
 import { BookOpen, HelpCircle, NotebookPen, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { negativeAgentId, studyAgentById } from "../../shared/studyRoster";
+import { negativeAgentId } from "../../shared/studyRoster";
 import type { AgentKey, Debrief, Round, Verdict } from "../../shared/studyTypes";
 import {
   StudyApiError,
@@ -18,10 +18,12 @@ import {
 } from "./api";
 import { CardWindow, ClerkPaper, FloorWindow, Ledger, PatientPane, PinTray, RecordPane, Table, listNames, patientPronouns } from "./Chamber";
 import { Tour, type TourStep } from "./Tour";
+import { agentById, tableConfig, words } from "./tableConfig";
 import { changeOptions, confidenceOptions } from "./content";
 import { FinalPlanView, FloorPointsEditor, SummarySheet, WorkingPlanEditor, WorkingPlanView } from "./Plan";
 import {
   activeAgents,
+  budgetFor,
   createId,
   debateLineFor,
   minutesOf,
@@ -30,8 +32,7 @@ import {
   pinLine,
   proceedingsOf,
   questionsLeft,
-  roundBudget,
-  roundNames,
+  roundLabel,
   secondsSince,
   threadFor,
   verdictLabels,
@@ -54,11 +55,13 @@ type CaseViewProps = {
   caseState: CaseState;
   updateCase: (updater: (current: CaseState) => CaseState) => void;
   onFinished: () => void;
+  /** Open the table straight away with this starting position (Thinking asks for it on its own page). */
+  startWith?: { diagnosis: string; plan: string; confidence: number };
 };
 
 const patientMotionGapMs = 30_000;
 
-export function CaseView({ slot, caseIndex, caseCount, caseState, updateCase, onFinished }: CaseViewProps) {
+export function CaseView({ slot, caseIndex, caseCount, caseState, updateCase, onFinished, startWith }: CaseViewProps) {
   // Latest state for async callbacks and timers (props are stale inside closures).
   const stateRef = useRef(caseState);
   stateRef.current = caseState;
@@ -214,7 +217,7 @@ export function CaseView({ slot, caseIndex, caseCount, caseState, updateCase, on
     const floorSummary = current.lines
       .filter((line) => line.speaker !== "chair" && line.speaker !== "patient" && line.status === "done")
       .slice(-12)
-      .map((line) => `${studyAgentById(line.speaker as AgentKey).shortName}: ${line.text.slice(0, 280)}`);
+      .map((line) => `${agentById(line.speaker as AgentKey).shortName}: ${line.text.slice(0, 280)}`);
     patchLine(replyId, { status: "streaming", error: undefined });
     try {
       const { reply } = await fetchPatientReply({ caseIndex, question, history, floorSummary });
@@ -606,9 +609,15 @@ export function CaseView({ slot, caseIndex, caseCount, caseState, updateCase, on
     updateCase((state) => ({ ...state, phase: "debrief", debriefOpenedAt: now() }));
   };
 
-  const caseLine = caseCount === 1 ? "Simulated consultation" : `Case ${caseIndex + 1} of ${caseCount}`;
+  const caseLine = words().caseLine ?? (caseCount === 1 ? "Simulated consultation" : `Case ${caseIndex + 1} of ${caseCount}`);
+
+  useEffect(() => {
+    if (startWith && stateRef.current.phase === "record") openChamber(startWith);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   if (caseState.phase === "record") {
+    if (startWith) return null;
     return (
       <div className="sheet-page">
         <CaseTitle slot={slot} caseLine={caseLine} />
@@ -668,15 +677,19 @@ export function CaseView({ slot, caseIndex, caseCount, caseState, updateCase, on
   return (
     <div className="sheet-page">
       <CaseTitle slot={slot} caseLine={caseLine} after />
-      <DebriefView
-        caseIndex={caseIndex}
-        caseState={caseState}
-        isLast={caseIndex + 1 >= caseCount}
-        onContinue={() => {
-          void log("debrief_closed", { secondsOnDebrief: secondsSince(caseState.debriefOpenedAt) });
-          onFinished();
-        }}
-      />
+      {tableConfig().debrief ? (
+        <DebriefView
+          caseIndex={caseIndex}
+          caseState={caseState}
+          isLast={caseIndex + 1 >= caseCount}
+          onContinue={() => {
+            void log("debrief_closed", { secondsOnDebrief: secondsSince(caseState.debriefOpenedAt) });
+            onFinished();
+          }}
+        />
+      ) : (
+        <SessionRecord slot={slot} caseState={caseState} onContinue={onFinished} />
+      )}
     </div>
   );
 }
@@ -715,14 +728,18 @@ type ChamberProps = {
   onTourDone: () => void;
 };
 
-const tourSteps = (slot: CaseSlot, firstCase: boolean): TourStep[] => {
+const tourSteps = (slot: CaseSlot, caseState: CaseState, firstCase: boolean): TourStep[] => {
   const label = slot.case.patientLabel;
   const pronoun = patientPronouns(label);
+  const thinking = tableConfig().domain === "thinking";
+  const seated = activeAgents(caseState).length;
   const steps: Array<TourStep & { always?: boolean }> = [
     {
       target: ".table-stage",
-      title: "Your panel",
-      body: "Six colleagues sit around the table, each thinking in a different way. Turn the table with the arrows, or click any card: it turns over to show your conversation with that member.",
+      title: thinking ? "Your table" : "Your panel",
+      body: thinking
+        ? `The ${seated === 1 ? "card you chose sits" : `${seated} cards you chose sit`} around the table, each a different way of thinking. Turn the table with the arrows, or click any card: it turns over to show your conversation with it.`
+        : "Six colleagues sit around the table, each thinking in a different way. Turn the table with the arrows, or click any card: it turns over to show your conversation with that member.",
     },
     {
       target: ".floor-seal",
@@ -732,7 +749,7 @@ const tourSteps = (slot: CaseSlot, firstCase: boolean): TourStep[] => {
     {
       target: ".tokens",
       title: "Your questions",
-      body: `You can ask the panel ${roundBudget[1]} questions in this round and ${roundBudget[2]} in the debate. A question to the Floor counts as one.${
+      body: `You can ask the panel ${budgetFor(caseState, 1)} questions in this round and ${budgetFor(caseState, 2)} in the debate. A question to the Floor counts as one.${
         slot.mode === "triadic" ? ` Talking to ${label} is free.` : ""
       }`,
     },
@@ -745,8 +762,12 @@ const tourSteps = (slot: CaseSlot, firstCase: boolean): TourStep[] => {
         }
       : {
           target: ".record-pane",
-          title: `${label} at a glance`,
-          body: `${label} is not in the room this time. The key facts and results stay here; open the full record at any time.`,
+          title: thinking ? "Your question" : slot.case.glance ? `${label} at a glance` : "Case notes",
+          body: thinking
+            ? "Your question stays here, where you and every card can read it."
+            : slot.case.glance
+              ? `${label} is not in the room this time. The key facts and results stay here; open the full record at any time.`
+              : "Your anonymised notes stay here, for you and the panel.",
           always: true,
         },
     {
@@ -756,8 +777,10 @@ const tourSteps = (slot: CaseSlot, firstCase: boolean): TourStep[] => {
     },
     {
       target: ".rail-plan",
-      title: "Your plan and notes",
-      body: "Update your working plan or jot notes at any time. The plan you locked at the start stays as it was.",
+      title: thinking ? "Your view and notes" : "Your plan and notes",
+      body: thinking
+        ? "Update where you stand or jot notes at any time. What you brought to the table stays as it was."
+        : "Update your working plan or jot notes at any time. The plan you locked at the start stays as it was.",
     },
     {
       target: ".advance",
@@ -847,19 +870,19 @@ function Chamber(props: ChamberProps) {
         <div className="rail-case">
           <span className="rail-step">{props.caseLine}</span>
           <strong>{slot.case.title}</strong>
-          <span className={`mode-chip ${slot.mode}`}>{triadic ? `${slot.case.patientLabel} is in the room` : "You and the panel"}</span>
+          <span className={`mode-chip ${slot.mode}`}>{triadic ? `${slot.case.patientLabel} is in the room` : (words().pairLabel ?? "You and the panel")}</span>
         </div>
         <ol className="rounds" aria-label="Rounds">
           {([1, 2, 3] as Round[]).map((round) => (
             <li key={round} className={round === caseState.round ? "current" : round < caseState.round ? "past" : ""} aria-current={round === caseState.round ? "step" : undefined}>
               <span className="round-number">{round}</span>
-              {roundNames[round]}
+              {roundLabel(round)}
             </li>
           ))}
         </ol>
-        {caseState.round < 3 && (
-          <div className="tokens" aria-label={`${left} of ${roundBudget[caseState.round as 1 | 2]} questions left in this round`}>
-            {Array.from({ length: roundBudget[caseState.round as 1 | 2] }, (_, index) => (
+        {caseState.round < 3 && budgetFor(caseState, caseState.round as 1 | 2) !== null && (
+          <div className="tokens" aria-label={`${left} of ${budgetFor(caseState, caseState.round as 1 | 2)} questions left in this round`}>
+            {Array.from({ length: budgetFor(caseState, caseState.round as 1 | 2)! }, (_, index) => (
               <span key={index} className={`token ${index < left ? "" : "spent"}`} />
             ))}
             <span className="tokens-label">{left} left</span>
@@ -875,10 +898,10 @@ function Chamber(props: ChamberProps) {
           <HelpCircle size={16} /> Guide
         </button>
         <button className="rail-record rail-plan" onClick={() => setDrawer("plan")} aria-pressed={drawer === "plan"}>
-          <NotebookPen size={16} /> My plan
+          <NotebookPen size={16} /> {tableConfig().domain === "thinking" ? "My view" : "My plan"}
         </button>
         <button className="rail-record" onClick={() => setDrawer("record")} aria-pressed={drawer === "record"}>
-          <BookOpen size={16} /> Record
+          <BookOpen size={16} /> {words().recordButton ?? "Record"}
         </button>
       </div>
 
@@ -958,7 +981,7 @@ function Chamber(props: ChamberProps) {
             {drawer === "plan" ? (
               <>
                 <section className="locked-plan working-edit">
-                  <h2>My working plan</h2>
+                  <h2>{tableConfig().domain === "thinking" ? "Where I stand" : "My working plan"}</h2>
                   <WorkingPlanEditor working={workingOf(caseState)} onSave={(next) => props.onSaveWorking(next, "drawer")} />
                 </section>
                 <LockedPlan caseState={caseState} />
@@ -979,7 +1002,7 @@ function Chamber(props: ChamberProps) {
 
       {touring && (
         <Tour
-          steps={tourSteps(slot, touring === "full")}
+          steps={tourSteps(slot, caseState, touring === "full")}
           onDone={(completed, reached) => {
             setTouring(undefined);
             props.log("tour_finished", { completed, reached });
@@ -998,7 +1021,7 @@ function CaseTitle({ slot, caseLine, after = false }: { slot: CaseSlot; caseLine
     <header className="case-title">
       <span className="rail-step">{caseLine}</span>
       <h1>{slot.case.title}</h1>
-      <span className={`mode-chip ${slot.mode}`}>{slot.mode === "triadic" ? `${slot.case.patientLabel} ${after ? "joined you" : "will be"} at the table` : "You and the panel"}</span>
+      <span className={`mode-chip ${slot.mode}`}>{slot.mode === "triadic" ? `${slot.case.patientLabel} ${after ? "joined you" : "will be"} at the table` : (words().pairLabel ?? "You and the panel")}</span>
     </header>
   );
 }
@@ -1006,8 +1029,8 @@ function CaseTitle({ slot, caseLine, after = false }: { slot: CaseSlot; caseLine
 function RecordView({ slot }: { slot: CaseSlot }) {
   return (
     <section className="record">
-      <h2>Patient record</h2>
-      <p className="record-note">A synthetic record. No real patient.</p>
+      <h2>{words().recordTitle}</h2>
+      <p className="record-note">{words().recordNote}</p>
       {slot.case.record.map((section) => (
         <div className="record-section" key={section.heading}>
           <h3>{section.heading}</h3>
@@ -1025,12 +1048,21 @@ function RecordView({ slot }: { slot: CaseSlot }) {
 function LockedPlan({ caseState }: { caseState: CaseState }) {
   return (
     <section className="locked-plan">
-      <h2>Your plan before the panel spoke</h2>
+      <h2>{words().beforeTitle}</h2>
       <p className="record-note">Locked when you opened the table.</p>
-      <h3>Working diagnosis</h3>
-      <p>{caseState.precommit?.diagnosis}</p>
-      <h3>Plan</h3>
-      <p>{caseState.precommit?.plan}</p>
+      {caseState.precommit?.diagnosis ? (
+        <>
+          <h3>{words().diagnosis}</h3>
+          <p>{caseState.precommit.diagnosis}</p>
+        </>
+      ) : null}
+      {caseState.precommit?.plan ? (
+        <>
+          <h3>{words().plan}</h3>
+          <p>{caseState.precommit.plan}</p>
+        </>
+      ) : null}
+      {!caseState.precommit?.diagnosis && !caseState.precommit?.plan && <p className="record-note">You came to the table with an open mind.</p>}
     </section>
   );
 }
@@ -1064,15 +1096,15 @@ function PrecommitForm({ slot, onSubmit }: { slot: CaseSlot; onSubmit: (value: {
           : " When you open the table, the consultation pauses while you confer with the panel."}
       </p>
       <label className="field">
-        Working diagnosis
+        {words().diagnosis}
         <textarea rows={3} value={diagnosis} onChange={(event) => setDiagnosis(event.target.value)} />
       </label>
       <label className="field">
-        Plan
+        {words().plan}
         <textarea rows={5} value={plan} onChange={(event) => setPlan(event.target.value)} />
       </label>
       <fieldset className="field">
-        <legend>Before the panel's discussion is shown, how confident are you in your working diagnosis and plan?</legend>
+        <legend>{words().confidenceBefore}</legend>
         <Scale name="confidence-before" options={confidenceOptions} value={confidence} onChange={setConfidence} />
       </fieldset>
       <button className="brass big" disabled={!ready} onClick={() => onSubmit({ diagnosis: diagnosis.trim(), plan: plan.trim(), confidence: confidence! })}>
@@ -1112,7 +1144,7 @@ function FinalForm({ slot, caseState, onSubmit }: { slot: CaseSlot; caseState: C
             <ol>
               {minutes.map((item) => (
                 <li key={item.id}>
-                  <span className="minutes-who">{listNames(item.agentIds.map((id) => studyAgentById(id).shortName))}</span>
+                  <span className="minutes-who">{listNames(item.agentIds.map((id) => agentById(id).shortName))}</span>
                   {item.text}
                   {item.verdict === "amend" && <span className="minutes-part"> (in part)</span>}
                 </li>
@@ -1125,18 +1157,18 @@ function FinalForm({ slot, caseState, onSubmit }: { slot: CaseSlot; caseState: C
       </div>
 
       <section className="form-sheet">
-        <h2>Your final diagnosis and plan</h2>
+        <h2>{words().finalTitle}</h2>
         <p>
           {prefilled
             ? "This starts from your working plan. The Clerk's summary of your Minutes is in the plan, marked as from the Floor. Keep, edit or remove each point, and change the rest as you see fit."
             : "Write your final working diagnosis and plan. The Clerk's summary of your Minutes is already in the plan, marked as from the Floor. Keep, edit or remove each point."}
         </p>
         <label className="field">
-          Working diagnosis
+          {words().diagnosis}
           <textarea rows={3} value={diagnosis} onChange={(event) => setDiagnosis(event.target.value)} />
         </label>
         <div className="field">
-          <span>Plan</span>
+          <span>{words().plan}</span>
           <div className="plan-composite">
             <FloorPointsEditor
               points={floor}
@@ -1153,11 +1185,11 @@ function FinalForm({ slot, caseState, onSubmit }: { slot: CaseSlot; caseState: C
           </div>
         </div>
         <fieldset className="field">
-          <legend>After ruling on the panel's contributions, how confident are you in your final diagnosis and plan?</legend>
+          <legend>{words().confidenceAfter}</legend>
           <Scale name="confidence-after" options={confidenceOptions} value={confidenceAfter} onChange={setConfidenceAfter} />
         </fieldset>
         <fieldset className="field">
-          <legend>Did the deliberation change your working diagnosis or plan?</legend>
+          <legend>{words().changeQuestion}</legend>
           <Scale name="change" options={changeOptions} value={change} onChange={setChange} />
         </fieldset>
         <label className="field">
@@ -1181,7 +1213,7 @@ function FinalForm({ slot, caseState, onSubmit }: { slot: CaseSlot; caseState: C
             });
           }}
         >
-          {saving ? "Saving…" : "Submit and see the debrief"}
+          {saving ? "Saving…" : tableConfig().debrief ? "Submit and see the debrief" : "Close the session"}
         </button>
       </section>
     </div>
@@ -1235,10 +1267,14 @@ function DebriefView({ caseIndex, caseState, isLast, onContinue }: { caseIndex: 
   return (
     <section className="form-sheet debrief">
       <h2>Debrief</h2>
-      {debrief.draft && <p className="draft-flag">Draft reference plan: pending review by the Chief Investigator.</p>}
+      {debrief.draft && (
+        <p className="draft-flag">
+          {tableConfig().finishLabel ? "Draft reference plan: pending clinical review." : "Draft reference plan: pending review by the Chief Investigator."}
+        </p>
+      )}
 
       <div className="debrief-negative">
-        <img src={studyAgentById(negativeAgentId).art} alt="" />
+        <img src={agentById(negativeAgentId).art} alt="" />
         <div>
           <h3>The deliberately unreliable panel member</h3>
           <p>
@@ -1261,7 +1297,7 @@ function DebriefView({ caseIndex, caseState, isLast, onContinue }: { caseIndex: 
 
       {caseState.final && (
         <div className="debrief-final">
-          <h3>Your final plan</h3>
+          <h3>{words().finalShort}</h3>
           <FinalPlanView final={caseState.final} />
         </div>
       )}
@@ -1276,8 +1312,91 @@ function DebriefView({ caseIndex, caseState, isLast, onContinue }: { caseIndex: 
       </ul>
       <p className="caveat">{debrief.caveat}</p>
       <button className="brass big" onClick={onContinue}>
-        {isLast ? "Continue to the questionnaire" : "Continue to the next case"}
+        {tableConfig().finishLabel ?? (isLast ? "Continue to the questionnaire" : "Continue to the next case")}
       </button>
+    </section>
+  );
+}
+
+/** The end of a demo table without a reference answer: what the Chair decided and what went into it, ready to keep. */
+function SessionRecord({ slot, caseState, onContinue }: { slot: CaseSlot; caseState: CaseState; onContinue: () => void }) {
+  const [copied, setCopied] = useState(false);
+  const minutes = minutesOf(caseState);
+  const final = caseState.final;
+  const w = words();
+  const text = [
+    `# ${slot.case.title}`,
+    "",
+    slot.case.motion ? `Question: ${slot.case.motion}` : "",
+    "",
+    `## ${w.finalShort}`,
+    final ? `${w.diagnosis}: ${final.diagnosis}` : "",
+    ...(final?.fromFloor ?? []).map((point) => `- ${point.text} (from the Floor)`),
+    final?.plan ? final.plan : "",
+    "",
+    "## The Minutes",
+    ...(minutes.length
+      ? minutes.map((item) => `- ${listNames(item.agentIds.map((id) => agentById(id).shortName))}: ${item.text}${item.verdict === "amend" ? " (in part)" : ""}`)
+      : ["Nothing was carried forward."]),
+    "",
+    `Quorum, ${new Date().toLocaleDateString()}. Generated by AI panel members; may be incorrect.`,
+  ]
+    .filter((line, index, all) => line !== "" || all[index - 1] !== "")
+    .join("\n");
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2000);
+    } catch {
+      setCopied(false);
+    }
+  };
+  const download = () => {
+    const blob = new Blob([text], { type: "text/markdown" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `quorum-${new Date().toISOString().slice(0, 10)}.md`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  };
+
+  return (
+    <section className="form-sheet debrief session-record">
+      <h2>Record of the session</h2>
+      {final && (
+        <div className="debrief-final">
+          <h3>{w.finalShort}</h3>
+          <FinalPlanView final={final} />
+        </div>
+      )}
+      <h3>The Minutes</h3>
+      {minutes.length ? (
+        <ol className="record-minutes">
+          {minutes.map((item) => (
+            <li key={item.id}>
+              <span className="minutes-who">{listNames(item.agentIds.map((id) => agentById(id).shortName))}</span>
+              {item.text}
+              {item.verdict === "amend" && <span className="minutes-part"> (in part)</span>}
+            </li>
+          ))}
+        </ol>
+      ) : (
+        <p className="record-note">Nothing was carried forward.</p>
+      )}
+      <p className="caveat">
+        Everything the panel said was generated by large language models and may be incorrect. Nothing from this session is stored on the
+        server: copy or download it if you want to keep it.
+      </p>
+      <div className="slip-actions">
+        <button onClick={() => void copy()}>{copied ? "Copied" : "Copy as text"}</button>
+        <button onClick={download}>Download</button>
+        <button className="brass big" onClick={onContinue}>
+          {tableConfig().finishLabel ?? "Done"}
+        </button>
+      </div>
     </section>
   );
 }

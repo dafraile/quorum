@@ -54,7 +54,7 @@ import {
 
 type Handler = (req: IncomingMessage, res: ServerResponse) => Promise<void>;
 
-class HttpError extends Error {
+export class HttpError extends Error {
   readonly status: number;
   constructor(status: number, message: string) {
     super(message);
@@ -64,7 +64,7 @@ class HttpError extends Error {
 
 const maxBodyBytes = 1_000_000;
 
-const readBody = async (req: IncomingMessage): Promise<Record<string, any>> => {
+export const readBody = async (req: IncomingMessage): Promise<Record<string, any>> => {
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of req) {
@@ -82,14 +82,14 @@ const readBody = async (req: IncomingMessage): Promise<Record<string, any>> => {
   }
 };
 
-const send = (res: ServerResponse, status: number, payload: unknown) => {
+export const send = (res: ServerResponse, status: number, payload: unknown) => {
   res.statusCode = status;
   res.setHeader("Content-Type", "application/json");
   res.setHeader("Cache-Control", "no-store");
   res.end(JSON.stringify(payload));
 };
 
-const route =
+export const route =
   (method: "GET" | "POST", handler: (req: IncomingMessage, res: ServerResponse) => Promise<void>): Handler =>
   async (req, res) => {
     if (req.method !== method) {
@@ -123,11 +123,11 @@ const caseSlot = (record: ParticipantRecord, caseIndex: unknown) => {
   return { slot, studyCase };
 };
 
-const shortText = (value: unknown, max: number) => (typeof value === "string" ? value.slice(0, max) : "");
-const textList = (value: unknown, maxItems: number, maxLength: number) =>
+export const shortText = (value: unknown, max: number) => (typeof value === "string" ? value.slice(0, max) : "");
+export const textList = (value: unknown, maxItems: number, maxLength: number) =>
   Array.isArray(value) ? value.filter((item) => typeof item === "string").slice(-maxItems).map((item) => item.slice(0, maxLength)) : [];
 
-const listOfStrings = (value: unknown) =>
+export const listOfStrings = (value: unknown) =>
   Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 
 // ---------------------------------------------------------------- participant
@@ -205,12 +205,12 @@ const staticFloor = route("POST", async (req, res) => {
   send(res, 200, { contributions, vetted: floor.vetted });
 });
 
-const envEffort = (name: string, fallback: Effort): Effort => {
+export const envEffort = (name: string, fallback: Effort): Effort => {
   const value = process.env[name];
   return value === "low" || value === "medium" || value === "high" ? value : fallback;
 };
 
-const clerkProvider = (): ProviderId => (process.env.STUDY_CLERK_PROVIDER === "openai" ? "openai" : "anthropic");
+export const clerkProvider = (): ProviderId => (process.env.STUDY_CLERK_PROVIDER === "openai" ? "openai" : "anthropic");
 
 /** A live opening contribution (the static ones come from /static-floor). */
 const contribution = route("POST", async (req, res) => {
@@ -259,10 +259,10 @@ const contribution = route("POST", async (req, res) => {
 const maxProceedingChars = 60_000;
 const speakers = new Set(["chair", "patient"]);
 
-const parseRound = (value: unknown): Round => (value === 2 ? 2 : value === 3 ? 3 : 1);
+export const parseRound = (value: unknown): Round => (value === 2 ? 2 : value === 3 ? 3 : 1);
 
 /** The client keeps the proceedings; validate and cap what it sends (latest lines win). */
-const parseProceedings = (value: unknown): ProceedingLine[] => {
+export const parseProceedings = (value: unknown): ProceedingLine[] => {
   if (!Array.isArray(value)) return [];
   const lines: ProceedingLine[] = value.flatMap((item: any) => {
     if (!item || typeof item.text !== "string" || typeof item.id !== "string") return [];
@@ -281,10 +281,10 @@ const parseProceedings = (value: unknown): ProceedingLine[] => {
   return kept;
 };
 
-const agentList = (value: unknown): StudyAgentId[] =>
+export const agentList = (value: unknown): StudyAgentId[] =>
   Array.isArray(value) ? [...new Set(value.filter(isStudyAgentId))] : [];
 
-const chatKinds = new Set<ChatKind>(["question", "motion", "hook", "patient-motion"]);
+export const chatKinds = new Set<ChatKind>(["question", "motion", "hook", "patient-motion"]);
 
 /** Streams one panel member's reply as NDJSON lines: {t:"d",v} deltas, then {t:"end"} or {t:"err"}. */
 const chat = async (req: IncomingMessage, res: ServerResponse) => {
@@ -461,7 +461,7 @@ const sentencesOf = (text: string) =>
   (text.match(/[^.!?]+[.!?]+["')\]]*|[^.!?]+$/g) ?? [text]).map((item) => item.trim()).filter(Boolean);
 
 /** Keep the Clerk honest: a quote must be the agent's own words, or we substitute the closest sentence. */
-const verbatimQuote = (quote: string, source: string) => {
+export const verbatimQuote = (quote: string, source: string) => {
   if (quote && normaliseText(source).includes(normaliseText(quote))) return quote.trim();
   const words = new Set(normaliseText(quote).split(" ").filter((word) => word.length > 3));
   let best = sentencesOf(source)[0] ?? source;
@@ -535,7 +535,7 @@ const clerkCandidates = route("POST", async (req, res) => {
   }
 });
 
-const verdicts = new Set<Verdict>(["accept", "amend", "reject"]);
+export const verdicts = new Set<Verdict>(["accept", "amend", "reject"]);
 
 const clerkChat = route("POST", async (req, res) => {
   const body = await readBody(req);
@@ -705,10 +705,10 @@ const patient = route("POST", async (req, res) => {
   }
 });
 
-const negativePurpose =
+export const negativePurpose =
   "This panel member was deliberately unreliable. It plays a doctor who has not updated their practice in years: confident, experienced-sounding and incurious. It is there to make premature closure visible, the comfortable explanation reached before the questions that would test it. Finding yourself agreeing with it at times is common and is the point of the exercise; it is not a judgement of your performance.";
 
-const debriefCaveat =
+export const debriefCaveat =
   "Everything the panel said was generated by large language models and may be incorrect. The reference plan is one reasonable approach prepared by the Chief Investigator, a practising GP; it is not the only acceptable plan. This was a fictional case: nothing you decided affects any real patient.";
 
 const debrief = route("POST", async (req, res) => {

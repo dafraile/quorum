@@ -1,4 +1,5 @@
-import { allStudyAgentIds, studyAgentById } from "../../shared/studyRoster";
+import { allStudyAgentIds } from "../../shared/studyRoster";
+import { agentById, words } from "./tableConfig";
 import type {
   AgentKey,
   Candidate,
@@ -14,6 +15,9 @@ import type {
 export const roundBudget: Record<1 | 2, number> = { 1: 5, 2: 3 };
 
 export const roundNames: Record<Round, string> = { 1: "Consultations", 2: "Debate", 3: "Synthesis" };
+
+/** A round's name as this table calls it. */
+export const roundLabel = (round: Round) => words().roundNames?.[round] ?? roundNames[round];
 
 export type Seat = AgentKey | "patient" | "floor";
 
@@ -132,6 +136,10 @@ export type CaseState = {
   debriefOpenedAt?: string;
   /** When the Chair finished or skipped the table tour for this case. */
   tourSeenAt?: string;
+  /** Who sits at the table (the demo lets the Chair choose); the whole panel when unset. */
+  seats?: AgentKey[];
+  /** Questions per round; null means no limit. The study's budget when unset. */
+  budget?: Record<1 | 2, number | null>;
 };
 
 export type StudyStep = "welcome" | "consent" | "declined" | "demographics" | "case" | "questionnaire" | "done" | "stopped";
@@ -209,19 +217,30 @@ export const workingOf = (caseState: CaseState): WorkingPlan =>
 
 /** How a pin reads to the panel and the Clerk: the verbatim words, plus the Chair's restatement if any. */
 export const pinLine = (pin: Pin) =>
-  `${studyAgentById(pin.agentId).shortName}: ${pin.quote}${pin.wording ? ` (the Chair's wording: ${pin.wording})` : ""}`;
+  `${agentById(pin.agentId).shortName}: ${pin.quote}${pin.wording ? ` (the Chair's wording: ${pin.wording})` : ""}`;
 
-export const agentName = (id: AgentKey) => studyAgentById(id).name;
+export const agentName = (id: AgentKey) => agentById(id).name;
+
+/** Everyone seated at the table, in panel order. */
+export const seatsOf = (caseState: CaseState): AgentKey[] =>
+  caseState.seats ? allStudyAgentIds.filter((id) => caseState.seats!.includes(id)) : allStudyAgentIds;
 
 /** Panel members still at the table: the Advocate withdraws once the patient speaks. */
 export const activeAgents = (caseState: CaseState): AgentKey[] =>
-  allStudyAgentIds.filter((id) => !(id === "patientAdvocate" && caseState.advocateWithdrawnAt));
+  seatsOf(caseState).filter((id) => !(id === "patientAdvocate" && caseState.advocateWithdrawnAt));
+
+/** The question budget for a round: a number, or null for no limit. */
+export const budgetFor = (caseState: CaseState, round: 1 | 2): number | null =>
+  caseState.budget ? caseState.budget[round] : roundBudget[round];
 
 export const patientUtterances = (caseState: CaseState) =>
   caseState.lines.filter((line) => line.speaker === "patient" && line.status === "done").map((line) => line.text);
 
-export const questionsLeft = (caseState: CaseState) =>
-  caseState.round === 3 ? 0 : roundBudget[caseState.round] - caseState.questionsUsed[caseState.round];
+export const questionsLeft = (caseState: CaseState) => {
+  if (caseState.round === 3) return 0;
+  const budget = budgetFor(caseState, caseState.round);
+  return budget === null ? Number.POSITIVE_INFINITY : budget - caseState.questionsUsed[caseState.round];
+};
 
 /** What a panel member has said at the table (hook-style openings count only once heard, otherwise the hook). */
 export const openingSaid = (opening: Opening | undefined, style: "paragraph" | "hook") => {
@@ -231,7 +250,7 @@ export const openingSaid = (opening: Opening | undefined, style: "paragraph" | "
 
 /** The proceedings in the order they happened, as sent to the debate and the Clerk. */
 export const proceedingsOf = (caseState: CaseState, style: "paragraph" | "hook", upToRound: Round): ProceedingLine[] => {
-  const openings: ProceedingLine[] = allStudyAgentIds.flatMap((agentId) => {
+  const openings: ProceedingLine[] = seatsOf(caseState).flatMap((agentId) => {
     const text = openingSaid(caseState.openings[agentId], style);
     return text ? [{ id: `open-${agentId}`, round: 1 as Round, speaker: agentId, text }] : [];
   });

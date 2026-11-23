@@ -1,8 +1,8 @@
 import { Pencil, Trash2, Undo2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { studyAgentById } from "../../shared/studyRoster";
 import { listNames } from "./Chamber";
 import { minutesOf, type CaseState, type FloorPoint, type WorkingPlan } from "./state";
+import { agentById, words } from "./tableConfig";
 
 // ================================================================ the Chair's working plan (between rounds)
 
@@ -34,11 +34,11 @@ export function WorkingPlanEditor({ working, onSave }: { working: WorkingPlan; o
   return (
     <div className="working-plan">
       <label className="field">
-        Working diagnosis
+        {words().diagnosis}
         <textarea rows={2} {...field("diagnosis")} />
       </label>
       <label className="field">
-        Plan
+        {words().plan}
         <textarea rows={5} {...field("plan")} />
       </label>
       <label className="field">
@@ -57,11 +57,11 @@ export function WorkingPlanEditor({ working, onSave }: { working: WorkingPlan; o
 export function WorkingPlanView({ working }: { working: WorkingPlan }) {
   return (
     <section className="locked-plan working">
-      <h2>Your working plan</h2>
+      <h2>{words().workingTitle}</h2>
       <p className="record-note">As you left it at the table.</p>
-      <h3>Working diagnosis</h3>
+      <h3>{words().diagnosis}</h3>
       <p>{working.diagnosis}</p>
-      <h3>Plan</h3>
+      <h3>{words().plan}</h3>
       <p>{working.plan}</p>
       {working.notes.trim() && (
         <>
@@ -76,9 +76,9 @@ export function WorkingPlanView({ working }: { working: WorkingPlan }) {
 // ================================================================ the Clerk's summary of the sealed Minutes
 
 const Faces = ({ agentIds }: { agentIds: FloorPoint["agentIds"] }) => (
-  <span className="floor-faces" title={listNames(agentIds.map((id) => studyAgentById(id).shortName))}>
+  <span className="floor-faces" title={listNames(agentIds.map((id) => agentById(id).shortName))}>
     {agentIds.map((id) => (
-      <img key={id} src={studyAgentById(id).art} alt="" />
+      <img key={id} src={agentById(id).art} alt="" />
     ))}
   </span>
 );
@@ -134,7 +134,7 @@ export function SummarySheet({
           ))}
         </ol>
       ) : (
-        <p>You carried nothing forward, so your final plan will be yours alone.</p>
+        <p>You carried nothing forward, so {words().finalNoun} will be yours alone.</p>
       )}
       {minutes.length > 0 && (
         <details className="summary-minutes">
@@ -142,7 +142,7 @@ export function SummarySheet({
           <ol>
             {minutes.map((item) => (
               <li key={item.id}>
-                <span className="minutes-who">{listNames(item.agentIds.map((id) => studyAgentById(id).shortName))}</span>
+                <span className="minutes-who">{listNames(item.agentIds.map((id) => agentById(id).shortName))}</span>
                 {item.text}
                 {item.verdict === "amend" && <span className="minutes-part"> (in part)</span>}
               </li>
@@ -260,9 +260,9 @@ export function FloorPointsEditor({
 export function FinalPlanView({ final }: { final: NonNullable<CaseState["final"]> }) {
   return (
     <div className="final-plan-view">
-      <h3>Working diagnosis</h3>
+      <h3>{words().diagnosis}</h3>
       <p>{final.diagnosis}</p>
-      <h3>Plan</h3>
+      <h3>{words().plan}</h3>
       {final.fromFloor && final.fromFloor.length > 0 && (
         <ol className="floor-points">
           {final.fromFloor.map((point) => (

@@ -14,21 +14,18 @@ The app supports both clinical-facing review and general thinking sessions. Clin
 
 ## Current App
 
-The current product surface includes:
+Four surfaces, one server:
 
-- A workspace intake for clinical cases or general problems.
-- Local clinical text anonymization with a privacy preflight before live API use.
-- Persistent Sessions stored in IndexedDB with localStorage fallback and JSON backup/import.
-- Session composition with default, opt-in, and custom archetype cards.
-- The "We have quorum" call moment.
-- Live OpenAI calls when a server-side API key is present.
-- Deterministic fallback outputs when live calls are unavailable.
-- Persistent Session turns with review state, lounge messages, Clerk drafts, and signed records.
-- A Lounge for routing follow-up turns between archetypes.
-- Chair review controls: accept, reject, request revision, and reroll.
-- Editable Clerk summaries, signed records, and an action log.
-- Carry-forward briefs that seed the next turn from accepted points, unresolved questions, actions, and Lounge tensions.
-- An eosinophilia seed case for debugging the clinical workflow.
+- `/`: the Quorum demo landing page, with two clearly separate products.
+  - **Clinical** (green chamber, parchment, the clinical panel):
+    - `/clinical/training`: a case library. Commit to your own plan, then take the case to the panel, optionally with a simulated patient in the room, and finish with a reference plan. Uses the study's vetted, pre-written opening Floors.
+    - `/clinical/consult`: bring your own case. Disclaimer first; the text is anonymised in the browser (`src/quorum/anonymise.ts`: names after titles and relations, dates, Medicare, IHI, DVA, record numbers, phones, emails, addresses, places, facilities; age, sex and occupation kept). The clinician reviews every redaction, can keep or add words, and confirms before anything is sent. Live panel.
+  - **Thinking** (`/thinking`, indigo and marigold, Fraunces): put a question to general archetypes in the same six seats: the Beginner (beginner's mind), the Maker (knowledge in action), the Collector (facts and figures), the Contrarian, the Heart (feelings) and the Elder (experience). Pick at least two; no question limit by default, or a 5/3 or 3/2 budget. Prompts in `server/quorum/thinkingPrompts.ts`, roster in `shared/thinkingRoster.ts`, placeholder card art from `node scripts/thinking-cards.mjs`.
+  - Both use the study's table (cards, Floor, Keep, debate, Clerk, Minutes, final plan) through `src/study/tableConfig.ts` (who sits, wording, limits) and `configureApi` (requests go to `/api/quorum/*` with the table in the body). Nothing is stored server-side; the session record can be copied or downloaded.
+- `/study`: the GP study (unchanged routes and prompts under `/api/study/*`), with `/study/admin` for the researcher console.
+- `/workbench`: the original hackathon workbench (sessions, Lounge, Clerk records, pattern anonymiser).
+
+The demo routes call the models for anyone who reaches the server, so they are on in development and off in production unless `QUORUM_DEMO=on` (`fly.toml` sets it off). Gate them before turning them on publicly.
 
 ## Run
 
@@ -106,7 +103,7 @@ No participant identifiers are collected on the platform; participants are known
 
 ## Deploy (Fly.io, Sydney)
 
-One container (`Dockerfile`) serves the client and the API; study data goes to a volume mounted at `/data`. The deployed image sets `QUORUM_WORKBENCH=off`, which removes the unauthenticated workbench model routes; study routes always need a participant link token.
+One container (`Dockerfile`) serves the client and the API; study data goes to a volume mounted at `/data`. The deployed image sets `QUORUM_WORKBENCH=off` and `QUORUM_DEMO=off`, which remove the unauthenticated workbench and demo model routes; study routes always need a participant link token.
 
 ```bash
 fly apps create quorum-chamber

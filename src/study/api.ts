@@ -14,6 +14,18 @@ import type {
 
 export const studyToken = () => new URLSearchParams(window.location.search).get("t") ?? "";
 
+/**
+ * Where the table's requests go. The GP study (default) sends the participant's token to /api/study;
+ * the Quorum demo sends its table (case or question, mode) to /api/quorum and logs nothing.
+ */
+type ApiTarget = { base: string; body: () => Record<string, unknown>; events: boolean };
+
+let target: ApiTarget = { base: "/api/study", body: () => ({ token: studyToken() }), events: true };
+
+export const configureApi = (next: ApiTarget) => {
+  target = next;
+};
+
 export class StudyApiError extends Error {
   readonly status: number;
   constructor(status: number, message: string) {
@@ -44,7 +56,7 @@ const postOnce = async <T>(path: string, body: Record<string, unknown>, timeoutM
     const response = await fetch(path, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token: studyToken(), ...body }),
+      body: JSON.stringify({ ...target.body(), ...body }),
       signal: controller.signal,
     });
     const payload = await response.json().catch(() => ({}));
@@ -59,13 +71,13 @@ const postOnce = async <T>(path: string, body: Record<string, unknown>, timeoutM
   }
 };
 
-export const fetchSession = () => post<SessionPayload>("/api/study/session", {});
+export const fetchSession = () => post<SessionPayload>(`${target.base}/session`, {});
 
 export const fetchStaticFloor = (caseIndex: number) =>
-  post<{ contributions: Contribution[]; vetted: boolean }>("/api/study/static-floor", { caseIndex });
+  post<{ contributions: Contribution[]; vetted: boolean }>(`${target.base}/static-floor`, { caseIndex });
 
 export const fetchContribution = (input: { caseIndex: number; agentId: AgentKey; requestId: string }) =>
-  post<Contribution>("/api/study/contribution", input);
+  post<Contribution>(`${target.base}/contribution`, input);
 
 export type ChatRequest = {
   caseIndex: number;
@@ -104,10 +116,10 @@ const streamChatOnce = async (input: ChatRequest, onDelta: (text: string) => voi
   const timer = window.setTimeout(() => controller.abort(), timeoutMs);
   let text = "";
   try {
-    const response = await fetch("/api/study/chat", {
+    const response = await fetch(`${target.base}/chat`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token: studyToken(), ...input }),
+      body: JSON.stringify({ ...target.body(), ...input }),
       signal: controller.signal,
     });
     if (!response.ok || !response.body) {
@@ -154,36 +166,36 @@ export const fetchDebate = (input: {
   pinned: string[];
   patientUtterances?: string[];
   requestId: string;
-}) => post<DebateContribution>("/api/study/debate", input, 100_000);
+}) => post<DebateContribution>(`${target.base}/debate`, input, 100_000);
 
 export const fetchClerkCandidates = (input: {
   caseIndex: number;
   proceedings: ProceedingLine[];
   pinned: Array<{ agentId: AgentKey; quote: string }>;
-}) => post<{ candidates: Candidate[] }>("/api/study/clerk/candidates", input, 110_000);
+}) => post<{ candidates: Candidate[] }>(`${target.base}/clerk/candidates`, input, 110_000);
 
 export const fetchClerkReply = (input: {
   caseIndex: number;
   candidates: Array<Candidate & { ruling?: string }>;
   history: Array<{ speaker: "chair" | "clerk"; text: string }>;
   message: string;
-}) => post<{ reply: string; proposals: ClerkProposal[] }>("/api/study/clerk/chat", input, 70_000);
+}) => post<{ reply: string; proposals: ClerkProposal[] }>(`${target.base}/clerk/chat`, input, 70_000);
 
 export const fetchClerkSummary = (input: { caseIndex: number; minutes: MinuteInput[] }) =>
-  post<MinutesSummary>("/api/study/clerk/summary", input, 70_000);
+  post<MinutesSummary>(`${target.base}/clerk/summary`, input, 70_000);
 
 export const fetchPatientReply = (input: {
   caseIndex: number;
   question: string;
   history: Array<{ role: "chair" | "patient"; text: string }>;
   floorSummary: string[];
-}) => post<{ reply: string }>("/api/study/patient", input, 60_000);
+}) => post<{ reply: string }>(`${target.base}/patient`, input, 60_000);
 
-export const fetchDebrief = (caseIndex: number) => post<Debrief>("/api/study/debrief", { caseIndex });
+export const fetchDebrief = (caseIndex: number) => post<Debrief>(`${target.base}/debrief`, { caseIndex });
 
-export const markComplete = () => post<{ ok: true }>("/api/study/complete", {});
+export const markComplete = () => post<{ ok: true }>(`${target.base}/complete`, {});
 
-export const saveSnapshot = (snapshot: unknown) => post<{ ok: true }>("/api/study/snapshot", { snapshot }, 20_000);
+export const saveSnapshot = (snapshot: unknown) => post<{ ok: true }>(`${target.base}/snapshot`, { snapshot }, 20_000);
 
 // Events are sent in order through a small queue that retries on network failure,
 // so a dropped connection delays the log rather than losing it.
@@ -197,7 +209,7 @@ const flush = async () => {
   while (queue.length) {
     const next = queue[0];
     try {
-      await post("/api/study/event", { type: next.type, caseIndex: next.caseIndex, data: next.data, clientAt: next.clientAt }, 20_000);
+      await post(`${target.base}/event`, { type: next.type, caseIndex: next.caseIndex, data: next.data, clientAt: next.clientAt }, 20_000);
       queue.shift();
       next.resolve();
     } catch (error) {
@@ -215,6 +227,10 @@ const flush = async () => {
 /** Queues an event; the promise resolves once the server has stored it. */
 export const logEvent = (type: string, data?: unknown, caseIndex?: number) =>
   new Promise<void>((resolve) => {
+    if (!target.events) {
+      resolve();
+      return;
+    }
     queue.push({ type, caseIndex, data, clientAt: new Date().toISOString(), resolve });
     void flush();
   });

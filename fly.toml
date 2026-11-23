@@ -8,6 +8,8 @@ primary_region = "syd"
 [env]
   STUDY_DATA_DIR = "/data"
   QUORUM_WORKBENCH = "off"
+  # The Clinical/Thinking demo calls the models without sign-in: keep it off until it is gated.
+  QUORUM_DEMO = "off"
 
 [mounts]
   source = "quorum_data"
